@@ -272,25 +272,27 @@ function PeopleList({ title, people, empty }) {
 }
 
 function CoordinatorCourses({ courses, branches, batches, sessions, institution, busy, save }) {
-  const emptyForm = { name: '', code: '', branchId: '', batchId: '', sessionId: '', semester: '', description: '' };
+  const emptyForm = { name: '', code: '', branchId: '', program: '', batchId: '', sessionId: '', semester: '', description: '' };
   const [form, setForm] = useState(emptyForm);
   const [editingCourse, setEditingCourse] = useState(null);
   const [search, setSearch] = useState('');
   const availableBatches = batches.filter(batch => (!form.branchId || batch.branchId === form.branchId) && (!form.sessionId || batch.sessionId === form.sessionId));
+  const selectedBranch = branches.find(branch => String(branch._id || branch.id) === String(form.branchId));
   const filteredCourses = courses.filter(course => `${course.code} ${course.name} ${course.branchName} ${course.batch}`.toLowerCase().includes(search.toLowerCase()));
   const reset = () => { setForm(emptyForm); setEditingCourse(null); };
 
   return <>
     <form className="coord-panel coord-form" onSubmit={event => {
       event.preventDefault();
-      if (editingCourse) save(() => api.updateCoordinatorCourse(editingCourse.id, { name: form.name, semester: form.semester, description: form.description }), 'Course updated.', reset);
+      if (editingCourse) save(() => api.updateCoordinatorCourse(editingCourse.id, { name: form.name, program: form.program, semester: form.semester, description: form.description }), 'Course updated.', reset);
       else save(() => api.createCoordinatorCourse(form), 'Course created.', reset);
     }}>
       <div className="coord-section-heading"><div><span className="coord-eyebrow">COURSE CATALOG</span><h2>{editingCourse ? `Edit ${editingCourse.code}` : 'Add a course or subject'}</h2></div>{editingCourse && <button type="button" className="btn btn-secondary btn-sm" onClick={reset}>Cancel edit</button>}</div>
       <div className="coord-form-grid">
         <Field label="Course name"><input required value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} /></Field>
         <Field label="Course code"><input required disabled={Boolean(editingCourse)} value={form.code} onChange={event => setForm({ ...form, code: event.target.value.toUpperCase() })} /></Field>
-        <Field label="Branch"><select required disabled={Boolean(editingCourse)} value={form.branchId} onChange={event => setForm({ ...form, branchId: event.target.value, batchId: '' })}><option value="">Select branch</option>{branches.map(row => <option key={row._id || row.id} value={row._id || row.id}>{row.name}</option>)}</select></Field>
+        <Field label="Branch"><select required disabled={Boolean(editingCourse)} value={form.branchId} onChange={event => setForm({ ...form, branchId: event.target.value, program: '', batchId: '' })}><option value="">Select branch</option>{branches.map(row => <option key={row._id || row.id} value={row._id || row.id}>{row.name}</option>)}</select></Field>
+        <Field label="Program"><select required value={form.program} onChange={event => setForm({ ...form, program: event.target.value })}><option value="">Select program</option>{(selectedBranch?.programs || []).map(program => <option key={program} value={program}>{program}</option>)}</select></Field>
         <Field label="Academic session"><select required disabled={Boolean(editingCourse)} value={form.sessionId} onChange={event => setForm({ ...form, sessionId: event.target.value, batchId: '' })}><option value="">Select session</option>{sessions.map(row => <option key={row._id || row.id} value={row._id || row.id}>{row.name}</option>)}</select></Field>
         <Field label="Batch"><select required disabled={Boolean(editingCourse)} value={form.batchId} onChange={event => setForm({ ...form, batchId: event.target.value })}><option value="">Select batch</option>{availableBatches.map(row => <option key={row._id || row.id} value={row._id || row.id}>{row.name}</option>)}</select></Field>
         <Field label="Semester or year"><input value={form.semester} onChange={event => setForm({ ...form, semester: event.target.value })} placeholder="Semester 3" /></Field>
@@ -301,7 +303,7 @@ function CoordinatorCourses({ courses, branches, batches, sessions, institution,
     </form>
     <section className="coord-panel">
       <div className="coord-section-heading"><div><span className="coord-eyebrow">INSTITUTION OFFERINGS</span><h2>Courses & subjects <span className="coord-count">{courses.length}</span></h2></div><input className="coord-search" value={search} onChange={event => setSearch(event.target.value)} aria-label="Search courses" placeholder="Search courses" /></div>
-      {filteredCourses.length ? <div className="coord-table-wrap"><table className="data-table"><thead><tr><th>Course</th><th>Branch</th><th>Batch</th><th>Session</th><th>Faculty</th><th>Actions</th></tr></thead><tbody>{filteredCourses.map(course => <tr key={course.id}><td><strong>{course.code}</strong><small className="coord-cell-sub">{course.name}</small></td><td>{course.branchName}</td><td>{course.batch}</td><td>{course.sessionName}</td><td>{course.facultyName || <span className="coord-muted">Unassigned</span>}</td><td><button className="btn btn-secondary btn-sm" onClick={() => { setEditingCourse(course); setForm({ name: course.name, code: course.code, branchId: course.branchId, batchId: course.batchId, sessionId: course.sessionId, semester: course.semester || '', description: course.description || '' }); }}>Edit</button></td></tr>)}</tbody></table></div> : <p className="coord-muted">No matching institution courses are configured.</p>}
+      {filteredCourses.length ? <div className="coord-table-wrap"><table className="data-table"><thead><tr><th>Course</th><th>Branch / program</th><th>Batch</th><th>Session</th><th>Faculty</th><th>Actions</th></tr></thead><tbody>{filteredCourses.map(course => <tr key={course.id}><td><strong>{course.code}</strong><small className="coord-cell-sub">{course.name}</small></td><td>{course.branchName}<small className="coord-cell-sub">{course.program || 'Program not set'}</small></td><td>{course.batch}</td><td>{course.sessionName}</td><td>{course.facultyName || <span className="coord-muted">Unassigned</span>}</td><td><button className="btn btn-secondary btn-sm" onClick={() => { setEditingCourse(course); setForm({ name: course.name, code: course.code, branchId: course.branchId, program: course.program || '', batchId: course.batchId, sessionId: course.sessionId, semester: course.semester || '', description: course.description || '' }); }}>Edit</button></td></tr>)}</tbody></table></div> : <p className="coord-muted">No matching institution courses are configured.</p>}
     </section>
   </>;
 }

@@ -125,6 +125,12 @@ export const api = {
   enrollFacultyCourseStudents: (id, studentIds) => request(`/faculty/courses/${id}/students`, { method: 'POST', body: JSON.stringify({ studentIds }) }),
   updateFacultyTeamStatus: (courseId, teamId, data) => request(`/faculty/courses/${courseId}/teams/${teamId}/status`, { method: 'PUT', body: JSON.stringify(data) }),
   updateFacultyTeamRepository: (courseId, teamId, githubUrl) => request(`/faculty/courses/${courseId}/teams/${teamId}/repository`, { method: 'PUT', body: JSON.stringify({ githubUrl }) }),
+  getFacultyLabs: (courseId) => request(`/faculty/courses/${courseId}/labs`),
+  createFacultyLab: (courseId, data) => request(`/faculty/courses/${courseId}/labs`, { method: 'POST', body: JSON.stringify(data) }),
+  reviewFacultyLabSubmission: (courseId, labId, submissionId, data) => request(`/faculty/courses/${courseId}/labs/${labId}/submissions/${submissionId}/review`, { method: 'PUT', body: JSON.stringify(data) }),
+  updateStudentTeamRepository: (courseId, teamId, githubUrl) => request(`/courses/${courseId}/teams/${teamId}/repository`, { method: 'PUT', body: JSON.stringify({ githubUrl }) }),
+  getCourseLabs: (courseId) => request(`/courses/${courseId}/labs`),
+  submitCourseLab: (courseId, labId, data) => request(`/courses/${courseId}/labs/${labId}/submissions`, { method: 'POST', body: JSON.stringify(data) }),
 
   // Academic Courses (Google Classroom Model)
   getCourses: (params = {}) => {

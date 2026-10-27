@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { api, getUser } from '../../api';
+import { CourseLabs } from './CourseLabs';
 import {
   ChevronRight,
   ArrowLeft,
@@ -80,6 +81,7 @@ export function CoursePage({ courseId, onBack }) {
   const [teamSearchQuery, setTeamSearchQuery] = useState('');
   const [teamStatusFilter, setTeamStatusFilter] = useState('all'); // 'all' | 'available' | 'full'
   const [viewingTeam, setViewingTeam] = useState(null);
+  const [teamRepositoryUrl, setTeamRepositoryUrl] = useState('');
   const [joiningTeamId, setJoiningTeamId] = useState(null);
   const [leavingTeamId, setLeavingTeamId] = useState(null);
   const [teamActionMsg, setTeamActionMsg] = useState(null);
@@ -156,6 +158,24 @@ export function CoursePage({ courseId, onBack }) {
       console.warn('Failed to load my course team:', err);
     } finally {
       setMyTeamLoading(false);
+    }
+  };
+
+  const handleViewTeam = team => {
+    setViewingTeam(team);
+    setTeamRepositoryUrl(team?.githubUrl || '');
+  };
+
+  const handleSaveTeamRepository = async () => {
+    if (!viewingTeam) return;
+    try {
+      await api.updateStudentTeamRepository(courseId, viewingTeam.id || viewingTeam._id, teamRepositoryUrl);
+      await fetchTeams();
+      await fetchMyTeam();
+      setViewingTeam(current => current ? { ...current, githubUrl: teamRepositoryUrl.trim() } : current);
+      setTeamActionMsg({ type: 'success', text: 'Team GitHub repository saved. Your faculty can now review its activity.' });
+    } catch (err) {
+      setTeamActionMsg({ type: 'error', text: err.message || 'Could not save the repository link.' });
     }
   };
 
@@ -735,6 +755,11 @@ export function CoursePage({ courseId, onBack }) {
             label: 'Resources',
             icon: FolderArchive,
             badge: course.resources?.length || null
+          },
+          {
+            id: 'labs',
+            label: 'Timed Labs',
+            icon: Clock
           }
         ].map((tab) => {
           const Icon = tab.icon;
@@ -1676,7 +1701,7 @@ export function CoursePage({ courseId, onBack }) {
 
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                     <button
-                      onClick={() => setViewingTeam(myTeam)}
+                      onClick={() => handleViewTeam(myTeam)}
                       style={{
                         display: 'inline-flex',
                         alignItems: 'center',
@@ -1923,6 +1948,7 @@ export function CoursePage({ courseId, onBack }) {
                               <Users size={22} />
                             </div>
                             <div>
+                              <div style={{ fontSize: '0.72rem', fontWeight: 800, color: '#38bdf8', letterSpacing: '0.07em' }}>TEAM #{t.teamNumber || '—'}</div>
                               <h4 style={{ fontSize: '1.15rem', fontWeight: 700, color: '#f8fafc', margin: 0 }}>
                                 {t.name}
                               </h4>
@@ -2042,7 +2068,7 @@ export function CoursePage({ courseId, onBack }) {
                         <div>
                           {isJoined ? (
                             <button
-                              onClick={() => setViewingTeam(t)}
+                              onClick={() => handleViewTeam(t)}
                               style={{
                                 padding: '7px 15px',
                                 borderRadius: '8px',
@@ -2058,7 +2084,7 @@ export function CoursePage({ courseId, onBack }) {
                             </button>
                           ) : isFull ? (
                             <button
-                              onClick={() => setViewingTeam(t)}
+                              onClick={() => handleViewTeam(t)}
                               style={{
                                 padding: '7px 14px',
                                 borderRadius: '8px',
@@ -2075,7 +2101,7 @@ export function CoursePage({ courseId, onBack }) {
                           ) : (
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                               <button
-                                onClick={() => setViewingTeam(t)}
+                                onClick={() => handleViewTeam(t)}
                                 style={{
                                   padding: '7px 14px',
                                   borderRadius: '8px',
@@ -2149,6 +2175,8 @@ export function CoursePage({ courseId, onBack }) {
       )}
 
       {/* TAB 4: RESOURCES TAB */}
+      {activeTab === 'labs' && <CourseLabs courseId={courseId} />}
+
       {activeTab === 'resources' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
           {(course.resources || []).length > 0 ? (
@@ -2845,7 +2873,7 @@ export function CoursePage({ courseId, onBack }) {
                   </span>
                 </div>
                 <div style={{ fontSize: '0.84rem', color: '#94a3b8', marginTop: '4px' }}>
-                  Course: <strong style={{ color: '#38bdf8' }}>{viewingTeam.courseCode || course.code}</strong> • Lead: <strong style={{ color: '#f1f5f9' }}>{viewingTeam.teamLead}</strong>
+                  Team #: <strong style={{ color: '#38bdf8' }}>{viewingTeam.teamNumber || '—'}</strong> • Course: <strong style={{ color: '#38bdf8' }}>{viewingTeam.courseCode || course.code}</strong> • Lead: <strong style={{ color: '#f1f5f9' }}>{viewingTeam.teamLead}</strong>
                 </div>
               </div>
               <button
@@ -2896,7 +2924,7 @@ export function CoursePage({ courseId, onBack }) {
                     }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <div style={{
+                      {m.avatarUrl ? <img src={m.avatarUrl} alt="" style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover' }} /> : <div style={{
                         width: '32px',
                         height: '32px',
                         borderRadius: '50%',
@@ -2909,7 +2937,7 @@ export function CoursePage({ courseId, onBack }) {
                         justifyContent: 'center'
                       }}>
                         {getInitials(m.name)}
-                      </div>
+                      </div>}
                       <div>
                         <div style={{ fontWeight: 600, color: '#f8fafc', fontSize: '0.88rem' }}>
                           {m.name} {m.isLeader && <span style={{ color: '#f59e0b', fontSize: '0.72rem', fontWeight: 700 }}>(Lead)</span>}
@@ -2927,6 +2955,8 @@ export function CoursePage({ courseId, onBack }) {
                 ))}
               </div>
             </div>
+
+            {viewingTeam.isUserMember && <div style={{ padding: '14px', borderRadius: 10, background: 'rgba(56,189,248,.06)', border: '1px solid rgba(56,189,248,.18)' }}><div style={{ fontWeight: 700, marginBottom: 8 }}>Connect your team’s GitHub repository</div><div style={{ display: 'flex', gap: 8, alignItems: 'end' }}><label style={{ flex: 1 }}>Repository URL<input value={teamRepositoryUrl} onChange={event => setTeamRepositoryUrl(event.target.value)} placeholder="https://github.com/owner/repository" style={{ width: '100%', marginTop: 6, borderRadius: 8, padding: 10, background: '#090e1a', border: '1px solid rgba(255,255,255,.12)', color: '#fff' }} /></label><button className="btn btn-secondary" type="button" onClick={handleSaveTeamRepository}>Save link</button></div>{viewingTeam.githubUrl && <a href={viewingTeam.githubUrl} target="_blank" rel="noreferrer" style={{ display: 'inline-block', marginTop: 8, color: '#38bdf8' }}>Open linked repository</a>}<small style={{ display: 'block', color: '#94a3b8', marginTop: 7 }}>Your faculty can connect and review commit activity after you save the link.</small></div>}
 
             {/* Footer Actions */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '12px', marginTop: '10px' }}>

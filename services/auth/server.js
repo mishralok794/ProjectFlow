@@ -597,7 +597,7 @@ app.put('/auth/profile', authenticate, async (req, res) => {
   try {
     const user = await usersCollection.findOne({ _id: req.user.id, status: 'active' });
     if (!user) return res.status(404).json({ error: 'Active user profile not found' });
-    const allowed = ['name', 'department', 'designation', 'bio', 'avatarUrl', 'rollNumber', 'batch', 'gender'];
+    const allowed = ['name', 'department', 'designation', 'bio', 'avatarUrl', 'rollNumber', 'batch', 'gender', 'githubUrl'];
     const update = {};
     for (const field of allowed) if (req.body[field] !== undefined) update[field] = String(req.body[field]).trim();
     if (update.name !== undefined && !update.name) return res.status(400).json({ error: 'Name cannot be empty' });
@@ -607,6 +607,13 @@ app.put('/auth/profile', authenticate, async (req, res) => {
       try { isWebImage = ['http:', 'https:'].includes(new URL(update.avatarUrl).protocol); } catch { /* data URI handled above */ }
       if (!isDataImage && !isWebImage) return res.status(400).json({ error: 'Profile photo must be an http(s) image URL or an image upload up to 5 MB' });
     }
+    if (update.githubUrl) {
+      try {
+        const parsed = new URL(update.githubUrl);
+        if (parsed.hostname !== 'github.com' || !/^\/[A-Za-z0-9_.-]+\/?$/.test(parsed.pathname)) throw new Error();
+        update.githubUrl = `https://github.com/${parsed.pathname.split('/').filter(Boolean)[0]}`;
+      } catch { return res.status(400).json({ error: 'Enter a valid GitHub profile URL, such as https://github.com/username' }); }
+    }
     if (update.gender && !['Female', 'Male', 'Non-binary', 'Prefer not to say'].includes(update.gender)) return res.status(400).json({ error: 'Choose a valid profile gender option' });
     if (update.rollNumber) {
       const duplicate = await usersCollection.findOne({ rollNumber: update.rollNumber, role: 'Student' });
@@ -614,7 +621,7 @@ app.put('/auth/profile', authenticate, async (req, res) => {
     }
     if (Object.keys(update).length) await usersCollection.updateOne({ _id: user._id }, { $set: update });
     const saved = { ...user, ...update };
-    res.json({ id: saved._id, name: saved.name, email: saved.email, role: saved.role, roles: saved.roles || [saved.role], institutionId: saved.institutionId || null, branchId: saved.branchId || null, designation: saved.designation || null, bio: saved.bio || null, department: saved.department || '', rollNumber: saved.rollNumber || null, batch: saved.batch || null, gender: saved.gender || null, avatarUrl: saved.avatarUrl || null, status: saved.status, createdAt: saved.createdAt });
+    res.json({ id: saved._id, name: saved.name, email: saved.email, role: saved.role, roles: saved.roles || [saved.role], institutionId: saved.institutionId || null, branchId: saved.branchId || null, designation: saved.designation || null, bio: saved.bio || null, department: saved.department || '', rollNumber: saved.rollNumber || null, batch: saved.batch || null, gender: saved.gender || null, avatarUrl: saved.avatarUrl || null, githubUrl: saved.githubUrl || '', status: saved.status, createdAt: saved.createdAt });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

@@ -8,7 +8,7 @@ const { authenticate, authorizeRoles } = require('../../shared/authMiddleware');
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
 const PORT = process.env.PROJECT_PORT || 5002;
 const INTEGRATION_SERVICE_URL = process.env.INTEGRATION_SERVICE_URL || 'http://localhost:5005';
@@ -27,6 +27,8 @@ let branchesCollection;
 let batchesCollection;
 let sessionsCollection;
 let facultyAssignmentsCollection;
+let labAssignmentsCollection;
+let labSubmissionsCollection;
 let usersCollection;
 let eventBus;
 
@@ -571,6 +573,11 @@ function canManageFacultyCourse(user, course) {
   if (user.role === 'Admin') return true;
   if (user.role === 'Coordinator') return String(user.institutionId) === String(course.institutionId);
   return String(user.institutionId) === String(course.institutionId) && String(course.facultyId) === String(user.id);
+}
+
+function teamNumberFor(members = []) {
+  const rolls = members.map(member => String(member.rollNumber || '').trim()).filter(Boolean).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+  return rolls[0] || '';
 }
 
 function coordinatorCourseScope(user) {
@@ -1224,7 +1231,7 @@ app.get('/projects/:id/overview', authenticate, async (req, res) => {
 app.get('/coordinator/courses', authenticate, requireInstitutionCoordinator, async (req, res) => {
   try {
     const courses = await coursesCollection.find(coordinatorCourseScope(req.user)).sort({ createdAt: -1 }).toArray();
-    res.json(courses.map(course => ({ id: course._id, code: course.code, name: course.name, branchId: course.branchId, branchName: course.branchName, batchId: course.batchId, batch: course.batch, sessionId: course.sessionId, sessionName: course.sessionName, semester: course.semester, description: course.description || '', facultyName: course.facultyName || '', facultyEmail: course.facultyEmail || '', facultyId: course.facultyId || null, createdAt: course.createdAt })));
+    res.json(courses.map(course => ({ id: course._id, code: course.code, name: course.name, branchId: course.branchId, branchName: course.branchName, program: course.program || '', batchId: course.batchId, batch: course.batch, sessionId: course.sessionId, sessionName: course.sessionName, semester: course.semester, description: course.description || '', facultyName: course.facultyName || '', facultyEmail: course.facultyEmail || '', facultyId: course.facultyId || null, createdAt: course.createdAt })));
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -1232,17 +1239,18 @@ app.post('/coordinator/courses', authenticate, requireInstitutionCoordinator, as
   try {
     const institutionId = req.user.role === 'Admin' ? String(req.body.institutionId || '') : String(req.user.institutionId || '');
     const { name, code, branchId, batchId, sessionId } = req.body;
-    if (!institutionId || !String(name || '').trim() || !String(code || '').trim() || !branchId || !batchId || !sessionId) return res.status(400).json({ error: 'Institution, course name and code, branch, batch, and session are required' });
+    const program = String(req.body.program || '').trim();
+    if (!institutionId || !String(name || '').trim() || !String(code || '').trim() || !branchId || !program || !batchId || !sessionId) return res.status(400).json({ error: 'Institution, course name and code, branch, program, batch, and session are required' });
     if (req.user.role !== 'Admin' && institutionId !== String(req.user.institutionId)) return res.status(403).json({ error: 'Institution access denied' });
     const [branch, batch, session] = await Promise.all([
       branchesCollection.findOne({ _id: String(branchId), institutionId }),
       batchesCollection.findOne({ _id: String(batchId), institutionId }),
       sessionsCollection.findOne({ _id: String(sessionId), institutionId })
     ]);
-    if (!branch || !batch || !session || batch.branchId !== String(branchId) || batch.sessionId !== String(sessionId)) return res.status(400).json({ error: 'Selected branch, batch, and session must belong together in this institution' });
+    if (!branch || !batch || !session || batch.branchId !== String(branchId) || batch.sessionId !== String(sessionId) || !(branch.programs || []).includes(program)) return res.status(400).json({ error: 'Selected branch, program, batch, and session must belong together in this institution' });
     const normalizedCode = String(code).trim().toUpperCase();
     if (await coursesCollection.findOne({ institutionId, code: normalizedCode })) return res.status(409).json({ error: 'This course code already exists in the institution' });
-    const course = { _id: generateId(), institutionId, code: normalizedCode, name: String(name).trim(), department: branch.name, branchId: String(branchId), branchName: branch.name, batchId: String(batchId), batch: batch.name, sessionId: String(sessionId), sessionName: session.name, semester: String(req.body.semester || '').trim(), description: String(req.body.description || '').trim(), facultyId: null, facultyName: '', facultyEmail: '', enrolledEmails: [], enrolledStudentIds: [], announcements: [], resources: [], createdBy: req.user.id, createdAt: new Date().toISOString() };
+    const course = { _id: generateId(), institutionId, code: normalizedCode, name: String(name).trim(), department: branch.name, branchId: String(branchId), branchName: branch.name, program, batchId: String(batchId), batch: batch.name, sessionId: String(sessionId), sessionName: session.name, semester: String(req.body.semester || '').trim(), description: String(req.body.description || '').trim(), facultyId: null, facultyName: '', facultyEmail: '', enrolledEmails: [], enrolledStudentIds: [], announcements: [], resources: [], createdBy: req.user.id, createdAt: new Date().toISOString() };
     await coursesCollection.insertOne(course);
     res.status(201).json({ id: course._id, ...course });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -1256,6 +1264,12 @@ app.put('/coordinator/courses/:id', authenticate, requireInstitutionCoordinator,
     if (req.body.name !== undefined) update.name = String(req.body.name).trim();
     if (req.body.description !== undefined) update.description = String(req.body.description).trim();
     if (req.body.semester !== undefined) update.semester = String(req.body.semester).trim();
+    if (req.body.program !== undefined) {
+      const branch = await branchesCollection.findOne({ _id: String(course.branchId), institutionId: course.institutionId });
+      const program = String(req.body.program || '').trim();
+      if (!branch || !(branch.programs || []).includes(program)) return res.status(400).json({ error: 'Choose a program offered by this course branch' });
+      update.program = program;
+    }
     if (update.name === '') return res.status(400).json({ error: 'Course name cannot be empty' });
     await coursesCollection.updateOne({ _id: course._id }, { $set: update });
     res.json({ ...course, ...update });
@@ -1279,9 +1293,10 @@ app.post('/coordinator/assignments', authenticate, requireInstitutionCoordinator
     if (activeCourseAssignment && String(activeCourseAssignment.facultyId) !== String(faculty._id)) return res.status(409).json({ error: 'This course already has a faculty member. Reassign its existing assignment instead.' });
     const duplicate = await facultyAssignmentsCollection.findOne({ courseId: course._id, facultyId: String(faculty._id), batchId: course.batchId, sessionId: course.sessionId, status: 'active' });
     if (duplicate) return res.status(409).json({ error: 'This faculty assignment already exists' });
-    const assignment = { _id: generateId(), institutionId: course.institutionId, courseId: course._id, courseCode: course.code, courseName: course.name, facultyId: String(faculty._id), facultyName: faculty.name, facultyEmail: faculty.email, branchId: course.branchId, branchName: course.branchName, batchId: course.batchId, batchName: course.batch, sessionId: course.sessionId, sessionName: course.sessionName, semester: course.semester, status: 'active', createdBy: req.user.id, createdAt: new Date().toISOString() };
+    const coordinator = await usersCollection.findOne({ _id: String(req.user.id) });
+    const assignment = { _id: generateId(), institutionId: course.institutionId, courseId: course._id, courseCode: course.code, courseName: course.name, facultyId: String(faculty._id), facultyName: faculty.name, facultyEmail: faculty.email, branchId: course.branchId, branchName: course.branchName, batchId: course.batchId, batchName: course.batch, sessionId: course.sessionId, sessionName: course.sessionName, semester: course.semester, assignedById: String(req.user.id), assignedByName: coordinator?.name || 'Institution Coordinator', status: 'active', createdBy: req.user.id, createdAt: new Date().toISOString() };
     await facultyAssignmentsCollection.insertOne(assignment);
-    await coursesCollection.updateOne({ _id: course._id }, { $set: { facultyId: String(faculty._id), facultyName: faculty.name, facultyEmail: faculty.email } });
+    await coursesCollection.updateOne({ _id: course._id }, { $set: { facultyId: String(faculty._id), facultyName: faculty.name, facultyEmail: faculty.email, assignedById: assignment.assignedById, assignedByName: assignment.assignedByName } });
     res.status(201).json(assignment);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -1294,9 +1309,103 @@ app.put('/coordinator/assignments/:id', authenticate, requireInstitutionCoordina
     if (!faculty) return res.status(400).json({ error: 'Select an active faculty member associated with this institution' });
     const duplicate = await facultyAssignmentsCollection.findOne({ courseId: assignment.courseId, facultyId: String(faculty._id), batchId: assignment.batchId, sessionId: assignment.sessionId, status: 'active' });
     if (duplicate && String(duplicate._id) !== String(assignment._id)) return res.status(409).json({ error: 'This faculty assignment already exists' });
-    await facultyAssignmentsCollection.updateOne({ _id: assignment._id }, { $set: { facultyId: String(faculty._id), facultyName: faculty.name, facultyEmail: faculty.email, updatedBy: req.user.id } });
-    await coursesCollection.updateOne({ _id: assignment.courseId }, { $set: { facultyId: String(faculty._id), facultyName: faculty.name, facultyEmail: faculty.email } });
-    res.json({ ...assignment, facultyId: String(faculty._id), facultyName: faculty.name, facultyEmail: faculty.email });
+    const coordinator = await usersCollection.findOne({ _id: String(req.user.id) });
+    const assignedByName = coordinator?.name || assignment.assignedByName || 'Institution Coordinator';
+    await facultyAssignmentsCollection.updateOne({ _id: assignment._id }, { $set: { facultyId: String(faculty._id), facultyName: faculty.name, facultyEmail: faculty.email, assignedById: String(req.user.id), assignedByName, updatedBy: req.user.id } });
+    await coursesCollection.updateOne({ _id: assignment.courseId }, { $set: { facultyId: String(faculty._id), facultyName: faculty.name, facultyEmail: faculty.email, assignedById: String(req.user.id), assignedByName } });
+    res.json({ ...assignment, facultyId: String(faculty._id), facultyName: faculty.name, facultyEmail: faculty.email, assignedById: String(req.user.id), assignedByName });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/faculty/courses/:id/labs', authenticate, requireFacultyWorkspaceAccess, async (req, res) => {
+  try {
+    const course = await coursesCollection.findOne({ _id: req.params.id });
+    if (!course || !canManageFacultyCourse(req.user, course)) return res.status(404).json({ error: 'Course not found in your teaching scope' });
+    const [labs, submissions] = await Promise.all([
+      labAssignmentsCollection.find({ courseId: course._id }).sort({ createdAt: -1 }).toArray(),
+      labSubmissionsCollection.find({ courseId: course._id }).sort({ submittedAt: -1 }).toArray()
+    ]);
+    const teams = await courseTeamsCollection.find({ courseId: course._id }).toArray();
+    const teamNames = new Map(teams.map(team => [String(team._id), { name: team.name, teamNumber: team.teamNumber || teamNumberFor(team.members) }]));
+    res.json(labs.map(lab => ({ ...lab, submissions: submissions.filter(submission => String(submission.labId) === String(lab._id)).map(submission => ({ ...submission, teamName: teamNames.get(String(submission.teamId))?.name || 'Team', teamNumber: teamNames.get(String(submission.teamId))?.teamNumber || '' })) })));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/faculty/courses/:id/labs', authenticate, requireFacultyWorkspaceAccess, async (req, res) => {
+  try {
+    const course = await coursesCollection.findOne({ _id: req.params.id });
+    if (!course || !canManageFacultyCourse(req.user, course)) return res.status(404).json({ error: 'Course not found in your teaching scope' });
+    const title = String(req.body.title || '').trim();
+    const instructions = String(req.body.instructions || '').trim();
+    const durationMinutes = Number(req.body.durationMinutes);
+    if (!title || title.length > 150 || !instructions || instructions.length > 5000) return res.status(400).json({ error: 'Add a title and instructions (up to 5,000 characters)' });
+    if (![60, 120].includes(durationMinutes)) return res.status(400).json({ error: 'Lab duration must be 1 or 2 hours' });
+    const startsAt = new Date();
+    const lab = { _id: generateId(), courseId: course._id, courseCode: course.code, institutionId: course.institutionId, title, instructions, durationMinutes, startsAt: startsAt.toISOString(), dueAt: new Date(startsAt.getTime() + durationMinutes * 60_000).toISOString(), createdBy: req.user.id, createdByName: req.user.name, createdAt: startsAt.toISOString(), status: 'open' };
+    await labAssignmentsCollection.insertOne(lab);
+    res.status(201).json(lab);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/faculty/courses/:id/labs/:labId/submissions/:submissionId/review', authenticate, requireFacultyWorkspaceAccess, async (req, res) => {
+  try {
+    const course = await coursesCollection.findOne({ _id: req.params.id });
+    if (!course || !canManageFacultyCourse(req.user, course)) return res.status(404).json({ error: 'Course not found in your teaching scope' });
+    const submission = await labSubmissionsCollection.findOne({ _id: req.params.submissionId, labId: req.params.labId, courseId: course._id });
+    if (!submission) return res.status(404).json({ error: 'Lab submission not found' });
+    const status = String(req.body.status || 'Reviewed');
+    const feedback = String(req.body.feedback || '').trim();
+    if (!['Reviewed', 'Needs revision'].includes(status) || feedback.length > 2000) return res.status(400).json({ error: 'Choose a review status and keep feedback under 2,000 characters' });
+    await labSubmissionsCollection.updateOne({ _id: submission._id }, { $set: { status, feedback, reviewedBy: req.user.id, reviewedByName: req.user.name, reviewedAt: new Date().toISOString() } });
+    res.json({ id: submission._id, status, feedback });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/courses/:id/labs', authenticate, async (req, res) => {
+  try {
+    let course;
+    try { course = await getAuthorizedCourse(req.params.id, req.user); }
+    catch (authErr) { return res.status(authErr.statusCode || 403).json({ error: authErr.message }); }
+    if (!course) return res.status(404).json({ error: 'Course not found' });
+    const labs = await labAssignmentsCollection.find({ courseId: course._id }).sort({ createdAt: -1 }).toArray();
+    const userEmail = String(req.user.email || '').toLowerCase();
+    const teams = await courseTeamsCollection.find({ courseId: course._id }).toArray();
+    const team = teams.find(row => (row.members || []).some(member => String(member.email || '').toLowerCase() === userEmail));
+    const submissions = team ? await labSubmissionsCollection.find({ courseId: course._id, teamId: String(team._id) }).toArray() : [];
+    res.json(labs.map(lab => {
+      const submission = submissions.find(row => String(row.labId) === String(lab._id));
+      return { id: lab._id, title: lab.title, instructions: lab.instructions, durationMinutes: lab.durationMinutes, startsAt: lab.startsAt, dueAt: lab.dueAt, status: new Date() > new Date(lab.dueAt) ? 'closed' : 'open', teamName: team?.name || null, teamNumber: team?.teamNumber || teamNumberFor(team?.members), submission: submission ? { id: submission._id, status: submission.status, feedback: submission.feedback || '', submittedAt: submission.submittedAt, fileName: submission.fileName || '' } : null };
+    }));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/courses/:id/labs/:labId/submissions', authenticate, async (req, res) => {
+  try {
+    if ((req.user.role || '').toLowerCase() !== 'student') return res.status(403).json({ error: 'Student access is required to submit lab work' });
+    let course;
+    try { course = await getAuthorizedCourse(req.params.id, req.user); }
+    catch (authErr) { return res.status(authErr.statusCode || 403).json({ error: authErr.message }); }
+    if (!course) return res.status(404).json({ error: 'Course not found' });
+    const lab = await labAssignmentsCollection.findOne({ _id: req.params.labId, courseId: course._id });
+    if (!lab) return res.status(404).json({ error: 'Lab task not found' });
+    if (Date.now() > new Date(lab.dueAt).getTime()) return res.status(409).json({ error: 'This timed lab has closed' });
+    const userEmail = String(req.user.email || '').toLowerCase();
+    const teams = await courseTeamsCollection.find({ courseId: course._id }).toArray();
+    const team = teams.find(row => (row.members || []).some(member => String(member.email || '').toLowerCase() === userEmail));
+    if (!team) return res.status(403).json({ error: 'Join a project team before submitting lab work' });
+    const content = String(req.body.content || '').trim();
+    const fileName = String(req.body.fileName || '').trim().slice(0, 180);
+    const fileData = String(req.body.fileData || '');
+    const mimeType = String(req.body.mimeType || '');
+    if (!content && !fileData) return res.status(400).json({ error: 'Add a written response or attach your work' });
+    if (content.length > 20000) return res.status(400).json({ error: 'Written response must be under 20,000 characters' });
+    if (fileData && (!/^data:(text\/(plain|markdown|javascript|x-python)|application\/(pdf|json|zip));base64,[A-Za-z0-9+/=]+$/.test(fileData) || fileData.length > 7_000_000)) return res.status(400).json({ error: 'Upload a text/code, PDF, JSON or ZIP file up to 5 MB' });
+    const now = new Date().toISOString();
+    const existing = await labSubmissionsCollection.findOne({ labId: lab._id, teamId: String(team._id) });
+    const submission = { _id: existing?._id || generateId(), labId: lab._id, courseId: course._id, teamId: String(team._id), teamNumber: team.teamNumber || teamNumberFor(team.members), submittedBy: req.user.id, submittedByName: req.user.name, content, fileName, mimeType, fileData, submittedAt: now, status: 'Submitted', feedback: '', reviewedBy: null, reviewedAt: null };
+    if (existing) await labSubmissionsCollection.updateOne({ _id: existing._id }, { $set: submission });
+    else await labSubmissionsCollection.insertOne(submission);
+    res.status(existing ? 200 : 201).json({ id: submission._id, status: submission.status, submittedAt: submission.submittedAt, fileName: submission.fileName });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -1304,7 +1413,15 @@ app.put('/coordinator/assignments/:id', authenticate, requireInstitutionCoordina
 app.get('/faculty/courses', authenticate, requireFacultyWorkspaceAccess, async (req, res) => {
   try {
     const courses = await coursesCollection.find(facultyWorkspaceCourseFilter(req.user)).sort({ name: 1 }).toArray();
-    res.json(courses.map(course => ({ id: course._id, code: course.code, name: course.name, description: course.description || '', projectBrief: course.projectBrief || '', teamRules: course.teamRules || { minMembers: 4, maxMembers: 5, minFemaleMembers: 0 }, projectDeadline: course.projectDeadline || null, institutionId: course.institutionId, branchId: course.branchId, branchName: course.branchName, batchId: course.batchId, batch: course.batch, sessionId: course.sessionId, sessionName: course.sessionName, semester: course.semester, facultyId: course.facultyId || null, facultyName: course.facultyName || '', createdAt: course.createdAt })));
+    const branches = await branchesCollection.find({ institutionId: req.user.institutionId }).toArray();
+    const branchById = new Map(branches.map(branch => [String(branch._id), branch]));
+    const payload = await Promise.all(courses.map(async course => {
+      const assignment = await facultyAssignmentsCollection.findOne({ courseId: course._id, status: 'active' });
+      const assignedById = course.assignedById || assignment?.assignedById || assignment?.createdBy || null;
+      const assigner = assignedById ? await usersCollection.findOne({ _id: String(assignedById) }) : null;
+      return { id: course._id, code: course.code, name: course.name, description: course.description || '', projectBrief: course.projectBrief || '', teamRules: course.teamRules || { minMembers: 4, maxMembers: 5, minFemaleMembers: 0 }, projectDeadline: course.projectDeadline || null, institutionId: course.institutionId, branchId: course.branchId, branchName: course.branchName, program: course.program || '', programs: branchById.get(String(course.branchId))?.programs || [], batchId: course.batchId, batch: course.batch, sessionId: course.sessionId, sessionName: course.sessionName, semester: course.semester, facultyId: course.facultyId || null, facultyName: course.facultyName || '', assignedByName: course.assignedByName || assignment?.assignedByName || assigner?.name || 'Coordinator assignment', assignedById, createdAt: course.createdAt };
+    }));
+    res.json(payload);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -1325,11 +1442,12 @@ app.get('/faculty/courses/:id', authenticate, requireFacultyWorkspaceAccess, asy
       const profile = profilesByEmail.get(String(member.email || '').toLowerCase());
       if (profile && !roster.some(student => String(student._id) === String(profile._id))) roster.push(profile);
     }
-    const publicStudent = student => ({ id: student._id, name: student.name, email: student.email, rollNumber: student.rollNumber || '', department: student.department || '', batch: student.batch || '', avatarUrl: student.avatarUrl || '', institutionId: student.institutionId || null, branchId: student.branchId || null });
+    const publicStudent = student => ({ id: student._id, name: student.name, email: student.email, rollNumber: student.rollNumber || '', department: student.department || '', batch: student.batch || '', avatarUrl: student.avatarUrl || '', githubUrl: student.githubUrl || '', institutionId: student.institutionId || null, branchId: student.branchId || null });
     const studentMap = new Map([...eligibleRows, ...roster].map(student => [String(student.email || '').toLowerCase(), publicStudent(student)]));
-    const teams = teamRows.map(team => ({ id: team._id || team.id, name: team.name, description: team.description || '', status: team.status || 'Available', projectStatus: team.projectStatus || 'Not started', progressPercentage: Number(team.progressPercentage) || 0, maxMembers: team.maxMembers || course.teamRules?.maxMembers || 5, githubUrl: team.githubUrl || '', members: (team.members || []).map(member => ({ ...member, ...(studentMap.get(String(member.email || '').toLowerCase()) || {}) })), createdAt: team.createdAt }));
+    const teams = teamRows.map(team => ({ id: team._id || team.id, name: team.name, teamNumber: team.teamNumber || teamNumberFor(team.members), description: team.description || '', status: team.status || 'Available', projectStatus: team.projectStatus || 'Not started', progressPercentage: Number(team.progressPercentage) || 0, maxMembers: team.maxMembers || course.teamRules?.maxMembers || 5, githubUrl: team.githubUrl || '', members: (team.members || []).map(member => ({ ...member, ...(studentMap.get(String(member.email || '').toLowerCase()) || {}) })), createdAt: team.createdAt }));
     const eligibleStudents = eligibleRows.filter(student => !roster.some(enrolled => String(enrolled._id) === String(student._id))).map(publicStudent).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
-    res.json({ course: { id: course._id, code: course.code, name: course.name, description: course.description || '', projectBrief: course.projectBrief || '', teamRules: course.teamRules || { minMembers: 4, maxMembers: 5, minFemaleMembers: 0 }, projectDeadline: course.projectDeadline || null, institutionId: course.institutionId, branchId: course.branchId, branchName: course.branchName, batchId: course.batchId, batch: course.batch, sessionId: course.sessionId, sessionName: course.sessionName, semester: course.semester, facultyId: course.facultyId || null, facultyName: course.facultyName || '' }, students: roster.map(publicStudent).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })), eligibleStudents, teams, projects: projects.map(project => ({ id: project._id, name: project.name, status: project.status, progressPercentage: project.progressPercentage || 0, githubUrl: project.githubUrl || project.repositoryUrl || '', courseCode: project.courseCode || course.code })) });
+    const branch = await branchesCollection.findOne({ _id: String(course.branchId), institutionId: course.institutionId });
+    res.json({ course: { id: course._id, code: course.code, name: course.name, description: course.description || '', projectBrief: course.projectBrief || '', teamRules: course.teamRules || { minMembers: 4, maxMembers: 5, minFemaleMembers: 0 }, projectDeadline: course.projectDeadline || null, institutionId: course.institutionId, branchId: course.branchId, branchName: course.branchName, program: course.program || '', programs: branch?.programs || [], batchId: course.batchId, batch: course.batch, sessionId: course.sessionId, sessionName: course.sessionName, semester: course.semester, facultyId: course.facultyId || null, facultyName: course.facultyName || '', assignedByName: course.assignedByName || '' }, students: roster.map(publicStudent).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })), eligibleStudents, teams, projects: projects.map(project => ({ id: project._id, name: project.name, status: project.status, progressPercentage: project.progressPercentage || 0, githubUrl: project.githubUrl || project.repositoryUrl || '', courseCode: project.courseCode || course.code })) });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -1996,7 +2114,11 @@ app.get('/courses/:id/teams', authenticate, async (req, res) => {
         id: t._id || t.id,
         _id: t._id || t.id,
         name: t.name,
+        teamNumber: t.teamNumber || teamNumberFor(members),
         description: t.description || '',
+        githubUrl: t.githubUrl || '',
+        projectStatus: t.projectStatus || 'Not started',
+        progressPercentage: Number(t.progressPercentage) || 0,
         courseId: t.courseId || course._id,
         courseCode: t.courseCode || course.code,
         teamLead: t.teamLead,
@@ -2058,7 +2180,11 @@ app.get('/courses/:id/my-team', authenticate, async (req, res) => {
         id: userTeam._id || userTeam.id,
         _id: userTeam._id || userTeam.id,
         name: userTeam.name,
+        teamNumber: userTeam.teamNumber || teamNumberFor(members),
         description: userTeam.description || '',
+        githubUrl: userTeam.githubUrl || '',
+        projectStatus: userTeam.projectStatus || 'Not started',
+        progressPercentage: Number(userTeam.progressPercentage) || 0,
         courseId: userTeam.courseId || course._id,
         courseCode: userTeam.courseCode || course.code,
         teamLead: userTeam.teamLead,
@@ -2278,6 +2404,7 @@ app.post('/courses/:id/teams', authenticate, async (req, res) => {
       description: (description || '').trim(),
       teamLead: userName,
       teamLeadEmail: userEmail,
+      teamNumber: teamNumberFor(resolvedMembers),
       memberCount: resolvedMembers.length,
       maxMembers,
       status: resolvedMembers.length >= maxMembers ? 'Full' : 'Available',
@@ -2402,6 +2529,7 @@ app.post('/courses/:id/teams/:teamId/join', authenticate, async (req, res) => {
         $set: {
           members,
           memberCount: newMemberCount,
+          teamNumber: teamNumberFor(members),
           status: newStatus
         }
       }
@@ -2479,6 +2607,7 @@ app.post('/courses/:id/teams/:teamId/leave', authenticate, async (req, res) => {
         $set: {
           members,
           memberCount: members.length,
+          teamNumber: teamNumberFor(members),
           teamLead,
           teamLeadEmail,
           status: newStatus
@@ -2490,6 +2619,29 @@ app.post('/courses/:id/teams/:teamId/leave', authenticate, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: 'Failed to leave team: ' + err.message });
   }
+});
+
+app.put('/courses/:id/teams/:teamId/repository', authenticate, async (req, res) => {
+  try {
+    const course = await getAuthorizedCourse(req.params.id, req.user);
+    if (!course) return res.status(404).json({ error: 'Course not found' });
+    const team = await courseTeamsCollection.findOne({ _id: String(req.params.teamId), courseId: course._id });
+    if (!team) return res.status(404).json({ error: 'Team not found in this course' });
+    const isMember = (team.members || []).some(member => String(member.email || '').toLowerCase() === String(req.user.email || '').toLowerCase());
+    if ((req.user.role || '').toLowerCase() !== 'admin' && !isMember) return res.status(403).json({ error: 'Only a member of this team can update its repository' });
+    const rawUrl = String(req.body.githubUrl || '').trim();
+    let githubUrl = '';
+    if (rawUrl) {
+      try {
+        const parsed = new URL(rawUrl);
+        const segments = parsed.pathname.split('/').filter(Boolean);
+        if (parsed.hostname !== 'github.com' || segments.length !== 2 || !/^[A-Za-z0-9_.-]+$/.test(segments[0]) || !/^[A-Za-z0-9_.-]+$/.test(segments[1])) throw new Error();
+        githubUrl = `https://github.com/${segments[0]}/${segments[1]}`;
+      } catch { return res.status(400).json({ error: 'Enter a valid GitHub repository URL, such as https://github.com/owner/repository' }); }
+    }
+    await courseTeamsCollection.updateOne({ _id: team._id }, { $set: { githubUrl, githubUpdatedBy: req.user.id, githubUpdatedAt: new Date().toISOString() } });
+    res.json({ teamId: team._id, githubUrl });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 async function startServer() {
@@ -2510,6 +2662,8 @@ async function startServer() {
   batchesCollection = authDb.collection('batches');
   sessionsCollection = authDb.collection('academic_sessions');
   facultyAssignmentsCollection = db.collection('faculty_assignments');
+  labAssignmentsCollection = db.collection('lab_assignments');
+  labSubmissionsCollection = db.collection('lab_submissions');
 
   await seedCriteriaIfEmpty();
   await seedCoursesIfEmpty();
