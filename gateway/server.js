@@ -140,6 +140,11 @@ app.all('/api/coordinator/assignments*', (req, res) => {
   proxyRequest(`${SERVICES.project}${subPath}`, req, res);
 });
 
+app.all('/api/faculty*', (req, res) => {
+  const subPath = req.url.replace('/api', '');
+  proxyRequest(`${SERVICES.project}${subPath}`, req, res);
+});
+
 app.all('/api/coordinator*', (req, res) => {
   const subPath = req.url.replace('/api', '');
   proxyRequest(`${SERVICES.auth}${subPath}`, req, res);

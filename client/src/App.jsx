@@ -16,13 +16,14 @@ import { TasksPage } from './pages/student/TasksPage';
 import { GitHubPage } from './pages/student/GitHubPage';
 import { MilestonesPage } from './pages/student/MilestonesPage';
 import { DocumentsPage } from './pages/student/DocumentsPage';
-import { User, ArrowLeft, Mail, Hash, Calendar, GraduationCap, School } from 'lucide-react';
+import { AccountProfile } from './pages/AccountProfile';
 
 // Faculty Pages
 import { FacultyDashboard } from './pages/faculty/FacultyDashboard';
 import { ProjectDetails } from './pages/faculty/ProjectDetails';
 import { GitHubEvidencePage } from './pages/faculty/GitHubEvidencePage';
 import { EvaluationPage } from './pages/faculty/EvaluationPage';
+import { FacultyWorkspace } from './pages/faculty/FacultyWorkspace';
 
 // Admin Pages
 import { AdminDashboard } from './pages/admin/AdminDashboard';
@@ -150,60 +151,7 @@ export function App() {
                 />
               )}
 
-              {currentTab === 'profile' && (
-                <div style={{ maxWidth: '640px', margin: '20px auto' }} className="glass-panel">
-                  <div style={{ padding: '32px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '24px' }}>
-                      <div style={{
-                        width: '64px',
-                        height: '64px',
-                        borderRadius: '50%',
-                        background: 'linear-gradient(135deg, #0284c7 0%, #6366f1 100%)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        color: '#fff',
-                        fontWeight: 800,
-                        fontSize: '1.4rem'
-                      }}>
-                        {user?.name ? user.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() : 'ST'}
-                      </div>
-                      <div>
-                        <h2 style={{ fontSize: '1.4rem', fontWeight: 700, color: '#fff' }}>{user?.name || 'Student Account'}</h2>
-                        <span className="badge badge-emerald" style={{ marginTop: '4px' }}>
-                          <GraduationCap size={12} /> Enrolled Student
-                        </span>
-                      </div>
-                    </div>
-
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '0.9rem', color: '#cbd5e1' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px', background: 'rgba(255,255,255,0.03)', borderRadius: '8px' }}>
-                        <Mail size={16} style={{ color: '#38bdf8' }} />
-                        <span>Email: <strong style={{ color: '#fff' }}>{user?.email}</strong></span>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px', background: 'rgba(255,255,255,0.03)', borderRadius: '8px' }}>
-                        <Hash size={16} style={{ color: '#38bdf8' }} />
-                        <span>Roll Number: <strong style={{ color: '#fff' }}>{user?.rollNumber || '20251651013'}</strong></span>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px', background: 'rgba(255,255,255,0.03)', borderRadius: '8px' }}>
-                        <Calendar size={16} style={{ color: '#38bdf8' }} />
-                        <span>Batch: <strong style={{ color: '#fff' }}>{user?.batch || '2026-2028'}</strong></span>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px', background: 'rgba(255,255,255,0.03)', borderRadius: '8px' }}>
-                        <School size={16} style={{ color: '#38bdf8' }} />
-                        <span>Department: <strong style={{ color: '#fff' }}>{user?.department || 'Computer Science & Engineering'}</strong></span>
-                      </div>
-                    </div>
-
-                    <div style={{ marginTop: '28px' }}>
-                      <button onClick={() => setActiveTab('courses')} className="btn btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
-                        <ArrowLeft size={16} />
-                        <span>Back to My Courses</span>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
+              {currentTab === 'profile' && <AccountProfile />}
             </>
           )}
 
@@ -213,6 +161,7 @@ export function App() {
               {currentTab === 'faculty-dashboard' && (
                 <FacultyDashboard onSelectProject={handleFacultySelectProject} />
               )}
+              {currentTab === 'faculty-teaching' && <FacultyWorkspace />}
               {currentTab === 'faculty-projects' && (
                 <ProjectDetails
                   projectId={selectedProjectId}
@@ -246,7 +195,7 @@ export function App() {
             </>
           )}
 
-          {role === 'coordinator' && <CoordinatorPortal activeTab={currentTab} user={user} />}
+          {role === 'coordinator' && (currentTab === 'coordinator-teaching' ? <FacultyWorkspace /> : <CoordinatorPortal activeTab={currentTab} user={user} />)}
         </main>
       </div>
 

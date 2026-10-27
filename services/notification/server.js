@@ -15,6 +15,8 @@ let db;
 let notificationsCollection;
 let usersCollection;
 let branchesCollection;
+let coursesCollection;
+let courseTeamsCollection;
 let eventBus;
 
 // Seed initial notifications if empty
@@ -145,12 +147,53 @@ app.post('/notifications/coordinator/branch', authenticate, async (req, res) => 
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+app.post('/notifications/faculty/course', authenticate, async (req, res) => {
+  try {
+    const sender = await usersCollection.findOne({ _id: req.user.id, status: 'active' });
+    if (!sender || !['Faculty', 'Coordinator', 'Admin'].includes(sender.role)) return res.status(403).json({ error: 'Faculty or coordinator access is required' });
+    const courseId = String(req.body.courseId || '');
+    const course = await coursesCollection.findOne({ _id: courseId });
+    if (!course) return res.status(404).json({ error: 'Course not found' });
+    const isCoordinator = sender.role === 'Admin' || (sender.role === 'Coordinator' && String(sender.institutionId) === String(course.institutionId));
+    const isAssignedFaculty = sender.role === 'Faculty' && String(sender._id) === String(course.facultyId) && String(sender.institutionId) === String(course.institutionId);
+    if (!isCoordinator && !isAssignedFaculty) return res.status(403).json({ error: 'You cannot message this course' });
+    const audience = String(req.body.audience || 'course');
+    const title = String(req.body.title || '').trim();
+    const message = String(req.body.message || '').trim();
+    if (!['course', 'team'].includes(audience)) return res.status(400).json({ error: 'Choose all course students or one team' });
+    if (!title || title.length > 120 || !message || message.length > 2000) return res.status(400).json({ error: 'Add a title (up to 120 characters) and message (up to 2,000 characters)' });
+    let recipients = [];
+    if (audience === 'team') {
+      const team = await courseTeamsCollection.findOne({ _id: String(req.body.teamId || ''), courseId: course._id });
+      if (!team) return res.status(404).json({ error: 'Choose a team in this course' });
+      const emails = [...new Set((team.members || []).map(member => String(member.email || '').toLowerCase()).filter(Boolean))];
+      recipients = await usersCollection.find({ email: { $in: emails }, role: 'Student', status: 'active', institutionId: course.institutionId }).toArray();
+    } else {
+      const ids = (course.enrolledStudentIds || []).map(String);
+      const emails = (course.enrolledEmails || []).map(email => String(email).toLowerCase());
+      const or = [];
+      if (ids.length) or.push({ _id: { $in: ids } });
+      if (emails.length) or.push({ email: { $in: emails } });
+      if (!or.length) return res.status(400).json({ error: 'This course has no enrolled students to message' });
+      recipients = await usersCollection.find({ $or: or, role: 'Student', status: 'active', institutionId: course.institutionId }).toArray();
+    }
+    const uniqueRecipients = [...new Map(recipients.map(student => [String(student._id), student])).values()];
+    if (!uniqueRecipients.length) return res.status(400).json({ error: 'No active student recipients found' });
+    const createdAt = new Date().toISOString();
+    await notificationsCollection.insertMany(uniqueRecipients.map(student => ({ _id: crypto.randomUUID(), userId: String(student._id), title, message, type: 'announcement', read: false, institutionId: course.institutionId, courseId: course._id, courseName: course.name, audience, createdBy: String(sender._id), createdAt })));
+    res.status(201).json({ sent: uniqueRecipients.length, courseName: course.name, audience });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 async function startServer() {
   db = await createDatabase('notification-service', 'notification_db');
   notificationsCollection = db.collection('notifications');
   const authDb = await createDatabase('notification-auth', 'auth_db');
   usersCollection = authDb.collection('users');
   branchesCollection = authDb.collection('branches');
+  const projectDb = await createDatabase('notification-projects', 'project_db');
+  coursesCollection = projectDb.collection('courses');
+  courseTeamsCollection = projectDb.collection('courseTeams');
   await seedInitialNotifications();
 
   eventBus = await createEventBus('notification-service');

@@ -41,6 +41,7 @@ export function Sidebar({ activeTab, setActiveTab, onOpenNotifications }) {
   ];
 
   const facultyNav = [
+    { id: 'faculty-teaching', label: 'Teaching Workspace', icon: BookOpen },
     { id: 'faculty-dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'faculty-projects', label: 'Assigned Projects', icon: FolderGit2 },
     { id: 'faculty-criteria', label: 'Milestone Criteria Rules', icon: Sliders },
@@ -59,6 +60,7 @@ export function Sidebar({ activeTab, setActiveTab, onOpenNotifications }) {
 
   const coordinatorNav = [
     { id: 'coordinator-overview', label: 'Overview', icon: LayoutDashboard },
+    { id: 'coordinator-teaching', label: 'Teaching Workspace', icon: BookOpen },
     { id: 'coordinator-institution', label: 'Institution Profile', icon: Building2 },
     { id: 'coordinator-branches', label: 'Branches & Programs', icon: School },
     { id: 'coordinator-courses', label: 'Courses & Subjects', icon: BookOpen },

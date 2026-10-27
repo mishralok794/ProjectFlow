@@ -123,6 +123,14 @@ app.post('/auth/register', async (req, res) => {
 
     const institutionInput = req.body.institution || {};
     let normalizedCity = '';
+    if (req.body.avatarUrl) {
+      try { if (!['http:', 'https:'].includes(new URL(String(req.body.avatarUrl)).protocol)) throw new Error(); }
+      catch { return res.status(400).json({ error: 'Profile photo must be an http or https image URL' }); }
+    }
+    if (assignedRole === 'Student' && req.body.rollNumber) {
+      const duplicateRoll = await usersCollection.findOne({ role: 'Student', rollNumber: String(req.body.rollNumber).trim() });
+      if (duplicateRoll) return res.status(409).json({ error: 'This roll number is already registered' });
+    }
     if (assignedRole === 'Coordinator') {
       const institutionName = String(institutionInput.name || '').trim();
       const institutionType = String(institutionInput.type || '').trim().toLowerCase();
@@ -150,6 +158,12 @@ app.post('/auth/register', async (req, res) => {
       institutionId: null,
       status: 'active',
       department: req.body.department || 'Computer Science & Engineering',
+      designation: req.body.designation ? String(req.body.designation).trim() : null,
+      bio: req.body.bio ? String(req.body.bio).trim() : null,
+      rollNumber: req.body.rollNumber ? String(req.body.rollNumber).trim() : null,
+      batch: req.body.batch ? String(req.body.batch).trim() : null,
+      gender: req.body.gender && ['Female', 'Male', 'Non-binary', 'Prefer not to say'].includes(req.body.gender) ? req.body.gender : null,
+      avatarUrl: req.body.avatarUrl ? String(req.body.avatarUrl).trim() : null,
       createdAt: new Date().toISOString()
     };
 
@@ -327,6 +341,11 @@ app.get('/auth/me', authenticate, async (req, res) => {
       designation: user.designation || null,
       bio: user.bio || null,
       department: user.department,
+      branchId: user.branchId || null,
+      rollNumber: user.rollNumber || null,
+      batch: user.batch || null,
+      gender: user.gender || null,
+      avatarUrl: user.avatarUrl || null,
       status: user.status,
       createdAt: user.createdAt
     });
@@ -563,11 +582,38 @@ app.get('/auth/faculty', authenticate, async (req, res) => {
       name: u.name,
       email: u.email,
       department: u.department || 'Computer Science',
+      institutionId: u.institutionId || null,
+      branchId: u.branchId || null,
+      designation: u.designation || null,
+      avatarUrl: u.avatarUrl || null,
       status: u.status
     })));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+app.put('/auth/profile', authenticate, async (req, res) => {
+  try {
+    const user = await usersCollection.findOne({ _id: req.user.id, status: 'active' });
+    if (!user) return res.status(404).json({ error: 'Active user profile not found' });
+    const allowed = ['name', 'department', 'designation', 'bio', 'avatarUrl', 'rollNumber', 'batch', 'gender'];
+    const update = {};
+    for (const field of allowed) if (req.body[field] !== undefined) update[field] = String(req.body[field]).trim();
+    if (update.name !== undefined && !update.name) return res.status(400).json({ error: 'Name cannot be empty' });
+    if (update.avatarUrl) {
+      try { if (!['http:', 'https:'].includes(new URL(update.avatarUrl).protocol)) throw new Error(); }
+      catch { return res.status(400).json({ error: 'Profile photo must be an http or https image URL' }); }
+    }
+    if (update.gender && !['Female', 'Male', 'Non-binary', 'Prefer not to say'].includes(update.gender)) return res.status(400).json({ error: 'Choose a valid profile gender option' });
+    if (update.rollNumber) {
+      const duplicate = await usersCollection.findOne({ rollNumber: update.rollNumber, role: 'Student' });
+      if (duplicate && String(duplicate._id) !== String(user._id)) return res.status(409).json({ error: 'This roll number is already linked to another student' });
+    }
+    if (Object.keys(update).length) await usersCollection.updateOne({ _id: user._id }, { $set: update });
+    const saved = { ...user, ...update };
+    res.json({ id: saved._id, name: saved.name, email: saved.email, role: saved.role, roles: saved.roles || [saved.role], institutionId: saved.institutionId || null, branchId: saved.branchId || null, designation: saved.designation || null, bio: saved.bio || null, department: saved.department || '', rollNumber: saved.rollNumber || null, batch: saved.batch || null, gender: saved.gender || null, avatarUrl: saved.avatarUrl || null, status: saved.status, createdAt: saved.createdAt });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // Get Students List
@@ -626,8 +672,13 @@ app.post('/auth/users', authenticate, authorizeRoles('Admin'), async (req, res) 
       role,
       roles: [role],
       institutionId: req.body.institutionId || null,
-      designation: req.body.designation || null,
       department: department || 'Computer Science & Engineering',
+      designation: req.body.designation ? String(req.body.designation).trim() : null,
+      bio: req.body.bio ? String(req.body.bio).trim() : null,
+      rollNumber: req.body.rollNumber ? String(req.body.rollNumber).trim() : null,
+      batch: req.body.batch ? String(req.body.batch).trim() : null,
+      gender: req.body.gender && ['Female', 'Male', 'Non-binary', 'Prefer not to say'].includes(req.body.gender) ? req.body.gender : null,
+      avatarUrl: req.body.avatarUrl ? String(req.body.avatarUrl).trim() : null,
       status: 'active',
       createdAt: new Date().toISOString()
     };

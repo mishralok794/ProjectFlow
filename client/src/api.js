@@ -118,6 +118,12 @@ export const api = {
   createCoordinatorSession: (data) => request('/coordinator/sessions', { method: 'POST', body: JSON.stringify(data) }),
   getCoordinatorBatches: () => request('/coordinator/batches'),
   createCoordinatorBatch: (data) => request('/coordinator/batches', { method: 'POST', body: JSON.stringify(data) }),
+  updateMyProfile: (data) => request('/auth/profile', { method: 'PUT', body: JSON.stringify(data) }),
+  getFacultyCourses: () => request('/faculty/courses'),
+  getFacultyCourse: (id) => request(`/faculty/courses/${id}`),
+  updateFacultyCourseRules: (id, data) => request(`/faculty/courses/${id}/rules`, { method: 'PUT', body: JSON.stringify(data) }),
+  enrollFacultyCourseStudents: (id, studentIds) => request(`/faculty/courses/${id}/students`, { method: 'POST', body: JSON.stringify({ studentIds }) }),
+  updateFacultyTeamStatus: (courseId, teamId, data) => request(`/faculty/courses/${courseId}/teams/${teamId}/status`, { method: 'PUT', body: JSON.stringify(data) }),
 
   // Academic Courses (Google Classroom Model)
   getCourses: (params = {}) => {
@@ -340,5 +346,7 @@ export const api = {
     request('/notifications/read-all', { method: 'PUT' }, () => mockService.markAllNotificationsRead()),
 
   sendCoordinatorBranchMessage: (data) =>
-    request('/notifications/coordinator/branch', { method: 'POST', body: JSON.stringify(data) })
+    request('/notifications/coordinator/branch', { method: 'POST', body: JSON.stringify(data) }),
+  sendFacultyCourseMessage: (data) =>
+    request('/notifications/faculty/course', { method: 'POST', body: JSON.stringify(data) })
 };

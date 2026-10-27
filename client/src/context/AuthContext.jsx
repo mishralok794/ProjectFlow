@@ -50,13 +50,18 @@ export function AuthProvider({ children }) {
     setUser(null);
   };
 
+  const updateProfile = (profile) => {
+    setCurrentUser(profile);
+    setUser(profile);
+  };
+
   // Fast quick switcher for demo / grading
   const quickSwitchUser = async (email, password) => {
     return await login(email, password);
   };
 
   return (
-    <AuthContext.Provider value={{ user, token, loading, login, register, logout, quickSwitchUser }}>
+    <AuthContext.Provider value={{ user, token, loading, login, register, logout, quickSwitchUser, updateProfile }}>
       {children}
     </AuthContext.Provider>
   );

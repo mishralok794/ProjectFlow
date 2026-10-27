@@ -40,6 +40,9 @@ import {
 
 export function CoursePage({ courseId, onBack }) {
   const [course, setCourse] = useState(null);
+  const minTeamMembers = Number(course?.teamRules?.minMembers) || 4;
+  const maxTeamMembers = Number(course?.teamRules?.maxMembers) || 5;
+  const minFemaleMembers = Number(course?.teamRules?.minFemaleMembers) || 0;
   const [announcements, setAnnouncements] = useState([]);
   const [teams, setTeams] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -323,7 +326,7 @@ export function CoursePage({ courseId, onBack }) {
   }, [teams, teamStatusFilter, teamSearchQuery]);
 
   const handleAddMemberRow = () => {
-    if (createTeamForm.members.length >= 5) return;
+    if (createTeamForm.members.length >= maxTeamMembers) return;
     setCreateTeamForm(prev => ({
       ...prev,
       members: [...prev.members, { rollNumber: '', email: '' }]
@@ -331,7 +334,7 @@ export function CoursePage({ courseId, onBack }) {
   };
 
   const handleRemoveMemberRow = (index) => {
-    if (createTeamForm.members.length <= 4) return;
+    if (createTeamForm.members.length <= minTeamMembers) return;
     if (index === 0) return; // Cannot delete caller / lead
     setCreateTeamForm(prev => ({
       ...prev,
@@ -357,8 +360,8 @@ export function CoursePage({ courseId, onBack }) {
       return;
     }
 
-    if (createTeamForm.members.length < 4 || createTeamForm.members.length > 5) {
-      setCreateTeamError('Team size must be between 4 and 5 members.');
+    if (createTeamForm.members.length < minTeamMembers || createTeamForm.members.length > maxTeamMembers) {
+      setCreateTeamError(`Team size must be between ${minTeamMembers} and ${maxTeamMembers} members.`);
       return;
     }
 
@@ -2640,19 +2643,19 @@ export function CoursePage({ courseId, onBack }) {
                         <button
                           type="button"
                           onClick={() => handleRemoveMemberRow(index)}
-                          disabled={createTeamForm.members.length <= 4 || index === 0}
+                          disabled={createTeamForm.members.length <= minTeamMembers || index === 0}
                           style={{
                             background: 'none',
                             border: 'none',
-                            color: (createTeamForm.members.length <= 4 || index === 0) ? '#334155' : '#ef4444',
-                            cursor: (createTeamForm.members.length <= 4 || index === 0) ? 'not-allowed' : 'pointer',
+                            color: (createTeamForm.members.length <= minTeamMembers || index === 0) ? '#334155' : '#ef4444',
+                            cursor: (createTeamForm.members.length <= minTeamMembers || index === 0) ? 'not-allowed' : 'pointer',
                             padding: '6px',
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center',
                             borderRadius: '6px'
                           }}
-                          title={index === 0 ? "Cannot remove team lead" : createTeamForm.members.length <= 4 ? "Minimum 4 members required" : "Remove member"}
+                          title={index === 0 ? "Cannot remove team lead" : createTeamForm.members.length <= minTeamMembers ? `Minimum ${minTeamMembers} members required` : "Remove member"}
                         >
                           <Trash2 size={16} />
                         </button>
@@ -2662,7 +2665,7 @@ export function CoursePage({ courseId, onBack }) {
                 </div>
 
                 {/* Add Member Button */}
-                {createTeamForm.members.length < 5 && (
+                {createTeamForm.members.length < maxTeamMembers && (
                   <button
                     type="button"
                     onClick={handleAddMemberRow}
@@ -2720,7 +2723,8 @@ export function CoursePage({ courseId, onBack }) {
                     <li>Each student can be part of only one team in this course.</li>
                     <li>Roll number and email must belong to the same student.</li>
                     <li>All members must be from the same batch ({course.batch || '2026-2028'}).</li>
-                    <li>Team size must be between 4 and 5 members.</li>
+                    <li>Team size must be between {minTeamMembers} and {maxTeamMembers} members.</li>
+                    {minFemaleMembers > 0 && <li>At least {minFemaleMembers} women member(s) are required per team.</li>}
                   </ul>
                 </div>
               </div>

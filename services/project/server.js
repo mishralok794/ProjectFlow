@@ -547,6 +547,32 @@ async function requireInstitutionCoordinator(req, res, next) {
   } catch (err) { res.status(500).json({ error: err.message }); }
 }
 
+async function requireFacultyWorkspaceAccess(req, res, next) {
+  try {
+    const user = await usersCollection.findOne({ _id: req.user?.id });
+    if (!user || !['Faculty', 'Coordinator', 'Admin'].includes(user.role) || user.status === 'suspended') {
+      return res.status(403).json({ error: 'Faculty or coordinator access is required' });
+    }
+    req.user.role = user.role;
+    req.user.institutionId = user.institutionId || null;
+    req.user.email = user.email;
+    req.user.name = user.name;
+    next();
+  } catch (err) { res.status(500).json({ error: err.message }); }
+}
+
+function facultyWorkspaceCourseFilter(user) {
+  if (user.role === 'Admin') return {};
+  if (user.role === 'Coordinator') return { institutionId: user.institutionId };
+  return { institutionId: user.institutionId, facultyId: String(user.id) };
+}
+
+function canManageFacultyCourse(user, course) {
+  if (user.role === 'Admin') return true;
+  if (user.role === 'Coordinator') return String(user.institutionId) === String(course.institutionId);
+  return String(user.institutionId) === String(course.institutionId) && String(course.facultyId) === String(user.id);
+}
+
 function coordinatorCourseScope(user) {
   return user.role === 'Admin' ? {} : { institutionId: user.institutionId };
 }
@@ -1274,6 +1300,87 @@ app.put('/coordinator/assignments/:id', authenticate, requireInstitutionCoordina
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Faculty teaching workspace: coordinator-assigned courses, branch roster, teams, and project rules.
+app.get('/faculty/courses', authenticate, requireFacultyWorkspaceAccess, async (req, res) => {
+  try {
+    const courses = await coursesCollection.find(facultyWorkspaceCourseFilter(req.user)).sort({ name: 1 }).toArray();
+    res.json(courses.map(course => ({ id: course._id, code: course.code, name: course.name, description: course.description || '', projectBrief: course.projectBrief || '', teamRules: course.teamRules || { minMembers: 4, maxMembers: 5, minFemaleMembers: 0 }, projectDeadline: course.projectDeadline || null, institutionId: course.institutionId, branchId: course.branchId, branchName: course.branchName, batchId: course.batchId, batch: course.batch, sessionId: course.sessionId, sessionName: course.sessionName, semester: course.semester, facultyId: course.facultyId || null, facultyName: course.facultyName || '', createdAt: course.createdAt })));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/faculty/courses/:id', authenticate, requireFacultyWorkspaceAccess, async (req, res) => {
+  try {
+    const course = await coursesCollection.findOne({ _id: req.params.id });
+    if (!course || !canManageFacultyCourse(req.user, course)) return res.status(404).json({ error: 'Course not found in your teaching scope' });
+    const [teamRows, eligibleRows, projects] = await Promise.all([
+      courseTeamsCollection.find({ $or: [{ courseId: course._id }, { courseCode: course.code }] }).toArray(),
+      usersCollection.find({ role: 'Student', institutionId: course.institutionId, branchId: course.branchId, status: 'active' }).toArray(),
+      projectsCollection.find({ $or: [{ courseId: course._id }, { courseCode: course.code }] }).toArray()
+    ]);
+    const profilesByEmail = new Map(eligibleRows.map(student => [String(student.email || '').toLowerCase(), student]));
+    const enrolledIds = new Set((course.enrolledStudentIds || []).map(String));
+    const enrolledEmails = new Set((course.enrolledEmails || []).map(email => String(email).toLowerCase()));
+    const roster = eligibleRows.filter(student => enrolledIds.has(String(student._id)) || enrolledEmails.has(String(student.email || '').toLowerCase()));
+    for (const team of teamRows) for (const member of team.members || []) {
+      const profile = profilesByEmail.get(String(member.email || '').toLowerCase());
+      if (profile && !roster.some(student => String(student._id) === String(profile._id))) roster.push(profile);
+    }
+    const publicStudent = student => ({ id: student._id, name: student.name, email: student.email, rollNumber: student.rollNumber || '', department: student.department || '', batch: student.batch || '', avatarUrl: student.avatarUrl || '', institutionId: student.institutionId || null, branchId: student.branchId || null });
+    const studentMap = new Map([...eligibleRows, ...roster].map(student => [String(student.email || '').toLowerCase(), publicStudent(student)]));
+    const teams = teamRows.map(team => ({ id: team._id || team.id, name: team.name, description: team.description || '', status: team.status || 'Available', projectStatus: team.projectStatus || 'Not started', progressPercentage: Number(team.progressPercentage) || 0, maxMembers: team.maxMembers || course.teamRules?.maxMembers || 5, members: (team.members || []).map(member => ({ ...member, ...(studentMap.get(String(member.email || '').toLowerCase()) || {}) })), createdAt: team.createdAt }));
+    const eligibleStudents = eligibleRows.filter(student => !roster.some(enrolled => String(enrolled._id) === String(student._id))).map(publicStudent).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+    res.json({ course: { id: course._id, code: course.code, name: course.name, description: course.description || '', projectBrief: course.projectBrief || '', teamRules: course.teamRules || { minMembers: 4, maxMembers: 5, minFemaleMembers: 0 }, projectDeadline: course.projectDeadline || null, institutionId: course.institutionId, branchId: course.branchId, branchName: course.branchName, batchId: course.batchId, batch: course.batch, sessionId: course.sessionId, sessionName: course.sessionName, semester: course.semester, facultyId: course.facultyId || null, facultyName: course.facultyName || '' }, students: roster.map(publicStudent).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })), eligibleStudents, teams, projects: projects.map(project => ({ id: project._id, name: project.name, status: project.status, progressPercentage: project.progressPercentage || 0, githubUrl: project.githubUrl || project.repositoryUrl || '', courseCode: project.courseCode || course.code })) });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/faculty/courses/:id/rules', authenticate, requireFacultyWorkspaceAccess, async (req, res) => {
+  try {
+    const course = await coursesCollection.findOne({ _id: req.params.id });
+    if (!course || !canManageFacultyCourse(req.user, course)) return res.status(404).json({ error: 'Course not found in your teaching scope' });
+    const minMembers = Number(req.body.teamRules?.minMembers);
+    const maxMembers = Number(req.body.teamRules?.maxMembers);
+    const minFemaleMembers = Number(req.body.teamRules?.minFemaleMembers || 0);
+    if (!Number.isInteger(minMembers) || !Number.isInteger(maxMembers) || minMembers < 2 || maxMembers > 10 || minMembers > maxMembers) return res.status(400).json({ error: 'Team size must be between 2 and 10, with minimum no greater than maximum' });
+    if (!Number.isInteger(minFemaleMembers) || minFemaleMembers < 0 || minFemaleMembers > maxMembers) return res.status(400).json({ error: 'Minimum women members must be between 0 and the maximum team size' });
+    const projectBrief = String(req.body.projectBrief || '').trim();
+    const projectDeadline = req.body.projectDeadline ? new Date(req.body.projectDeadline).toISOString() : null;
+    if (projectBrief.length > 5000) return res.status(400).json({ error: 'Project brief cannot exceed 5,000 characters' });
+    const update = { teamRules: { minMembers, maxMembers, minFemaleMembers }, projectBrief, projectDeadline };
+    await coursesCollection.updateOne({ _id: course._id }, { $set: update });
+    res.json({ id: course._id, ...update });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/faculty/courses/:id/students', authenticate, requireFacultyWorkspaceAccess, async (req, res) => {
+  try {
+    const course = await coursesCollection.findOne({ _id: req.params.id });
+    if (!course || !canManageFacultyCourse(req.user, course)) return res.status(404).json({ error: 'Course not found in your teaching scope' });
+    const studentIds = [...new Set((Array.isArray(req.body.studentIds) ? req.body.studentIds : []).map(String))].slice(0, 200);
+    if (!studentIds.length) return res.status(400).json({ error: 'Select at least one student to enroll' });
+    const enrolled = await usersCollection.find({ _id: { $in: studentIds }, role: 'Student', institutionId: course.institutionId, branchId: course.branchId, status: 'active' }).toArray();
+    if (enrolled.length !== studentIds.length) return res.status(400).json({ error: 'Only active students from this course branch can be enrolled' });
+    const ids = [...new Set([...(course.enrolledStudentIds || []).map(String), ...enrolled.map(student => String(student._id))])];
+    const emails = [...new Set([...(course.enrolledEmails || []).map(email => String(email).toLowerCase()), ...enrolled.map(student => String(student.email).toLowerCase())])];
+    await coursesCollection.updateOne({ _id: course._id }, { $set: { enrolledStudentIds: ids, enrolledEmails: emails } });
+    res.json({ enrolled: enrolled.length, studentIds: ids });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/faculty/courses/:id/teams/:teamId/status', authenticate, requireFacultyWorkspaceAccess, async (req, res) => {
+  try {
+    const course = await coursesCollection.findOne({ _id: req.params.id });
+    if (!course || !canManageFacultyCourse(req.user, course)) return res.status(404).json({ error: 'Course not found in your teaching scope' });
+    const team = await courseTeamsCollection.findOne({ _id: req.params.teamId, courseId: course._id });
+    if (!team) return res.status(404).json({ error: 'Project team not found in this course' });
+    const allowed = ['Not started', 'In progress', 'Submitted', 'Under review', 'Completed'];
+    const projectStatus = String(req.body.projectStatus || '');
+    if (!allowed.includes(projectStatus)) return res.status(400).json({ error: 'Choose a valid project status' });
+    const progressPercentage = Math.max(0, Math.min(100, Number(req.body.progressPercentage) || 0));
+    await courseTeamsCollection.updateOne({ _id: team._id }, { $set: { projectStatus, progressPercentage, statusUpdatedBy: req.user.id, statusUpdatedAt: new Date().toISOString() } });
+    res.json({ id: team._id, projectStatus, progressPercentage });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // 1. GET /courses - list authorized courses with optional search
 app.get('/courses', authenticate, async (req, res) => {
   try {
@@ -1425,6 +1532,9 @@ app.get('/courses/:id', authenticate, async (req, res) => {
       color: course.color,
       icon: course.icon,
       description: course.description,
+      teamRules: course.teamRules || { minMembers: 4, maxMembers: 5, minFemaleMembers: 0 },
+      projectBrief: course.projectBrief || '',
+      projectDeadline: course.projectDeadline || null,
       instructorMessage: course.instructorMessage || null,
       announcements: course.announcements || [],
       resources: course.resources || [],
@@ -2003,10 +2113,14 @@ app.post('/courses/:id/teams', authenticate, async (req, res) => {
       return res.status(400).json({ error: 'Project description cannot exceed 500 characters.' });
     }
 
-    // 3. Team size validation (must be between 4 and 5 members)
-    if (!Array.isArray(members) || members.length < 4 || members.length > 5) {
+    const teamRules = course.teamRules || { minMembers: 4, maxMembers: 5, minFemaleMembers: 0 };
+    const minMembers = Number(teamRules.minMembers) || 4;
+    const maxMembers = Number(teamRules.maxMembers) || 5;
+    const minFemaleMembers = Number(teamRules.minFemaleMembers) || 0;
+    // Enforce the project team rules configured by the assigned faculty/coordinator.
+    if (!Array.isArray(members) || members.length < minMembers || members.length > maxMembers) {
       return res.status(400).json({
-        error: 'Team size must be between 4 and 5 members.'
+        error: `Team size must be between ${minMembers} and ${maxMembers} members for this course.`
       });
     }
 
@@ -2120,8 +2234,16 @@ app.post('/courses/:id/teams', authenticate, async (req, res) => {
         name: userDoc.name || (isLeader ? userName : 'Student Member'),
         email: userDoc.email,
         rollNumber: userDoc.rollNumber || roll,
+        avatarUrl: userDoc.avatarUrl || '',
         isLeader
       });
+    }
+
+    if (minFemaleMembers > 0) {
+      // Gender is read from the registered student profile and never copied into team roster data.
+      const verifiedMembers = await usersCollection.find({ email: { $in: resolvedMembers.map(member => member.email) } }).toArray();
+      const verifiedFemaleCount = verifiedMembers.filter(student => student.gender === 'Female').length;
+      if (verifiedFemaleCount < minFemaleMembers) return res.status(400).json({ error: `This course requires at least ${minFemaleMembers} women member(s) in each team.` });
     }
 
     // 6. Save new team
@@ -2134,8 +2256,8 @@ app.post('/courses/:id/teams', authenticate, async (req, res) => {
       teamLead: userName,
       teamLeadEmail: userEmail,
       memberCount: resolvedMembers.length,
-      maxMembers: 5,
-      status: resolvedMembers.length >= 5 ? 'Full' : 'Available',
+      maxMembers,
+      status: resolvedMembers.length >= maxMembers ? 'Full' : 'Available',
       members: resolvedMembers,
       createdAt: new Date().toISOString()
     };
