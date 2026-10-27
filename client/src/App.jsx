@@ -95,7 +95,9 @@ export function App() {
 
   // Reset tab default if role changes
   const effectiveTab = () => {
-    if (role === 'faculty' && (activeTab === 'dashboard' || activeTab === 'courses')) return 'faculty-dashboard';
+    // Faculty should land on the assigned-subject workspace, where their class,
+    // team, GitHub, messaging, and timed-lab cards live.
+    if (role === 'faculty' && (activeTab === 'dashboard' || activeTab === 'courses')) return 'faculty-teaching';
     if (role === 'admin' && (activeTab === 'dashboard' || activeTab === 'courses')) return 'admin-dashboard';
     if (role === 'coordinator' && (activeTab === 'dashboard' || activeTab === 'courses')) return 'coordinator-overview';
     if (role === 'student' && (activeTab.startsWith('faculty-') || activeTab.startsWith('admin-'))) return 'courses';
