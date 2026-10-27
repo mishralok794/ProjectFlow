@@ -19,7 +19,6 @@ import { DocumentsPage } from './pages/student/DocumentsPage';
 import { AccountProfile } from './pages/AccountProfile';
 
 // Faculty Pages
-import { FacultyDashboard } from './pages/faculty/FacultyDashboard';
 import { ProjectDetails } from './pages/faculty/ProjectDetails';
 import { GitHubEvidencePage } from './pages/faculty/GitHubEvidencePage';
 import { EvaluationPage } from './pages/faculty/EvaluationPage';
@@ -97,7 +96,7 @@ export function App() {
   const effectiveTab = () => {
     // Faculty should land on the assigned-subject workspace, where their class,
     // team, GitHub, messaging, and timed-lab cards live.
-    if (role === 'faculty' && (activeTab === 'dashboard' || activeTab === 'courses')) return 'faculty-teaching';
+    if (role === 'faculty' && (activeTab === 'dashboard' || activeTab === 'courses')) return 'faculty-dashboard';
     if (role === 'admin' && (activeTab === 'dashboard' || activeTab === 'courses')) return 'admin-dashboard';
     if (role === 'coordinator' && (activeTab === 'dashboard' || activeTab === 'courses')) return 'coordinator-overview';
     if (role === 'student' && (activeTab.startsWith('faculty-') || activeTab.startsWith('admin-'))) return 'courses';
@@ -160,10 +159,9 @@ export function App() {
           {/* FACULTY SHELL VIEWS */}
           {role === 'faculty' && (
             <>
-              {currentTab === 'faculty-dashboard' && (
-                <FacultyDashboard onSelectProject={handleFacultySelectProject} />
+              {['faculty-dashboard', 'faculty-subjects', 'faculty-teams', 'faculty-labs', 'faculty-messages', 'faculty-profile', 'faculty-teaching'].includes(currentTab) && (
+                <FacultyWorkspace initialView={{ 'faculty-dashboard': 'dashboard', 'faculty-subjects': 'subjects', 'faculty-teams': 'teams', 'faculty-labs': 'labs', 'faculty-messages': 'messages', 'faculty-profile': 'profile', 'faculty-teaching': 'dashboard' }[currentTab]} onNavigate={setActiveTab} />
               )}
-              {currentTab === 'faculty-teaching' && <FacultyWorkspace />}
               {currentTab === 'faculty-projects' && (
                 <ProjectDetails
                   projectId={selectedProjectId}

@@ -41,8 +41,12 @@ export function Sidebar({ activeTab, setActiveTab, onOpenNotifications }) {
   ];
 
   const facultyNav = [
-    { id: 'faculty-teaching', label: 'Teaching Workspace', icon: BookOpen },
     { id: 'faculty-dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'faculty-subjects', label: 'My Subjects', icon: BookOpen },
+    { id: 'faculty-teams', label: 'My Teams', icon: Users },
+    { id: 'faculty-labs', label: 'Lab Tasks', icon: CheckSquare },
+    { id: 'faculty-messages', label: 'Messages', icon: Send },
+    { id: 'faculty-profile', label: 'My Profile', icon: User },
     { id: 'faculty-projects', label: 'Assigned Projects', icon: FolderGit2 },
     { id: 'faculty-criteria', label: 'Milestone Criteria Rules', icon: Sliders },
     { id: 'faculty-evidence', label: 'GitHub Evidence', icon: Github },

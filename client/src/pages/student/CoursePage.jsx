@@ -1948,7 +1948,7 @@ export function CoursePage({ courseId, onBack }) {
                               <Users size={22} />
                             </div>
                             <div>
-                              <div style={{ fontSize: '0.72rem', fontWeight: 800, color: '#38bdf8', letterSpacing: '0.07em' }}>TEAM #{t.teamNumber || '—'}</div>
+                              <div style={{ fontSize: '0.72rem', fontWeight: 800, color: '#38bdf8', letterSpacing: '0.07em' }}>ROLL CODE · {t.teamNumber || 'Not set'}</div>
                               <h4 style={{ fontSize: '1.15rem', fontWeight: 700, color: '#f8fafc', margin: 0 }}>
                                 {t.name}
                               </h4>
@@ -2873,7 +2873,7 @@ export function CoursePage({ courseId, onBack }) {
                   </span>
                 </div>
                 <div style={{ fontSize: '0.84rem', color: '#94a3b8', marginTop: '4px' }}>
-                  Team #: <strong style={{ color: '#38bdf8' }}>{viewingTeam.teamNumber || '—'}</strong> • Course: <strong style={{ color: '#38bdf8' }}>{viewingTeam.courseCode || course.code}</strong> • Lead: <strong style={{ color: '#f1f5f9' }}>{viewingTeam.teamLead}</strong>
+                  Roll code: <strong style={{ color: '#38bdf8' }}>{viewingTeam.teamNumber || 'Not set'}</strong> • Team ID: <strong style={{ color: '#38bdf8' }}>{viewingTeam.id || viewingTeam._id}</strong> • Course: <strong style={{ color: '#38bdf8' }}>{viewingTeam.courseCode || course.code}</strong> • Lead: <strong style={{ color: '#f1f5f9' }}>{viewingTeam.teamLead}</strong>
                 </div>
               </div>
               <button

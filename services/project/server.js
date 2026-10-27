@@ -1413,13 +1413,35 @@ app.post('/courses/:id/labs/:labId/submissions', authenticate, async (req, res) 
 app.get('/faculty/courses', authenticate, requireFacultyWorkspaceAccess, async (req, res) => {
   try {
     const courses = await coursesCollection.find(facultyWorkspaceCourseFilter(req.user)).sort({ name: 1 }).toArray();
-    const branches = await branchesCollection.find({ institutionId: req.user.institutionId }).toArray();
+    const courseIds = courses.map(course => course._id);
+    const [branches, assignments, teams, pendingSubmissions, labs] = await Promise.all([
+      branchesCollection.find({ institutionId: req.user.institutionId }).toArray(),
+      facultyAssignmentsCollection.find({ courseId: { $in: courseIds }, status: 'active' }).toArray(),
+      courseTeamsCollection.find({ courseId: { $in: courseIds } }).toArray(),
+      labSubmissionsCollection.find({ courseId: { $in: courseIds }, status: 'Submitted' }).toArray(),
+      labAssignmentsCollection.find({ courseId: { $in: courseIds } }).toArray()
+    ]);
     const branchById = new Map(branches.map(branch => [String(branch._id), branch]));
+    const assignmentByCourse = new Map(assignments.map(assignment => [String(assignment.courseId), assignment]));
+    const teamCounts = new Map();
+    for (const team of teams) teamCounts.set(String(team.courseId), (teamCounts.get(String(team.courseId)) || 0) + 1);
+    const pendingCounts = new Map();
+    for (const submission of pendingSubmissions) pendingCounts.set(String(submission.courseId), (pendingCounts.get(String(submission.courseId)) || 0) + 1);
+    const activeLabCounts = new Map();
+    const now = Date.now();
+    for (const lab of labs) if (new Date(lab.dueAt).getTime() > now) activeLabCounts.set(String(lab.courseId), (activeLabCounts.get(String(lab.courseId)) || 0) + 1);
+    const assignerIds = [...new Set([
+      ...assignments.map(assignment => assignment.assignedById || assignment.createdBy),
+      ...courses.map(course => course.assignedById)
+    ].map(id => String(id || '')).filter(Boolean))];
+    const assigners = assignerIds.length ? await usersCollection.find({ _id: { $in: assignerIds } }).toArray() : [];
+    const assignerById = new Map(assigners.map(assigner => [String(assigner._id), assigner]));
     const payload = await Promise.all(courses.map(async course => {
-      const assignment = await facultyAssignmentsCollection.findOne({ courseId: course._id, status: 'active' });
+      const assignment = assignmentByCourse.get(String(course._id));
       const assignedById = course.assignedById || assignment?.assignedById || assignment?.createdBy || null;
-      const assigner = assignedById ? await usersCollection.findOne({ _id: String(assignedById) }) : null;
-      return { id: course._id, code: course.code, name: course.name, description: course.description || '', projectBrief: course.projectBrief || '', teamRules: course.teamRules || { minMembers: 4, maxMembers: 5, minFemaleMembers: 0 }, projectDeadline: course.projectDeadline || null, institutionId: course.institutionId, branchId: course.branchId, branchName: course.branchName, program: course.program || '', programs: branchById.get(String(course.branchId))?.programs || [], batchId: course.batchId, batch: course.batch, sessionId: course.sessionId, sessionName: course.sessionName, semester: course.semester, facultyId: course.facultyId || null, facultyName: course.facultyName || '', assignedByName: course.assignedByName || assignment?.assignedByName || assigner?.name || 'Coordinator assignment', assignedById, createdAt: course.createdAt };
+      const assigner = assignedById ? assignerById.get(String(assignedById)) : null;
+      const key = String(course._id);
+      return { id: course._id, code: course.code, name: course.name, description: course.description || '', projectBrief: course.projectBrief || '', teamRules: course.teamRules || null, projectDeadline: course.projectDeadline || null, institutionId: course.institutionId, branchId: course.branchId, branchName: course.branchName, program: course.program || '', programs: branchById.get(String(course.branchId))?.programs || [], batchId: course.batchId, batch: course.batch, sessionId: course.sessionId, sessionName: course.sessionName, semester: course.semester, facultyId: course.facultyId || null, facultyName: course.facultyName || '', assignedByName: course.assignedByName || assignment?.assignedByName || assigner?.name || '', assignedById, teamCount: teamCounts.get(key) || 0, pendingReviewCount: pendingCounts.get(key) || 0, activeLabCount: activeLabCounts.get(key) || 0, createdAt: course.createdAt };
     }));
     res.json(payload);
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -1444,7 +1466,7 @@ app.get('/faculty/courses/:id', authenticate, requireFacultyWorkspaceAccess, asy
     }
     const publicStudent = student => ({ id: student._id, name: student.name, email: student.email, rollNumber: student.rollNumber || '', department: student.department || '', batch: student.batch || '', avatarUrl: student.avatarUrl || '', githubUrl: student.githubUrl || '', institutionId: student.institutionId || null, branchId: student.branchId || null });
     const studentMap = new Map([...eligibleRows, ...roster].map(student => [String(student.email || '').toLowerCase(), publicStudent(student)]));
-    const teams = teamRows.map(team => ({ id: team._id || team.id, name: team.name, teamNumber: team.teamNumber || teamNumberFor(team.members), description: team.description || '', status: team.status || 'Available', projectStatus: team.projectStatus || 'Not started', progressPercentage: Number(team.progressPercentage) || 0, maxMembers: team.maxMembers || course.teamRules?.maxMembers || 5, githubUrl: team.githubUrl || '', members: (team.members || []).map(member => ({ ...member, ...(studentMap.get(String(member.email || '').toLowerCase()) || {}) })), createdAt: team.createdAt }));
+    const teams = teamRows.map(team => ({ id: team._id || team.id, teamId: team._id || team.id, name: team.name, teamNumber: team.teamNumber || teamNumberFor(team.members), description: team.description || '', status: team.projectStatus || null, projectStatus: team.projectStatus || null, progressPercentage: Number.isFinite(Number(team.progressPercentage)) && team.progressPercentage !== undefined && team.progressPercentage !== null ? Number(team.progressPercentage) : null, maxMembers: team.maxMembers || course.teamRules?.maxMembers || null, githubUrl: team.githubUrl || '', members: (team.members || []).map(member => ({ ...member, ...(studentMap.get(String(member.email || '').toLowerCase()) || {}) })), createdAt: team.createdAt }));
     const eligibleStudents = eligibleRows.filter(student => !roster.some(enrolled => String(enrolled._id) === String(student._id))).map(publicStudent).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
     const branch = await branchesCollection.findOne({ _id: String(course.branchId), institutionId: course.institutionId });
     res.json({ course: { id: course._id, code: course.code, name: course.name, description: course.description || '', projectBrief: course.projectBrief || '', teamRules: course.teamRules || { minMembers: 4, maxMembers: 5, minFemaleMembers: 0 }, projectDeadline: course.projectDeadline || null, institutionId: course.institutionId, branchId: course.branchId, branchName: course.branchName, program: course.program || '', programs: branch?.programs || [], batchId: course.batchId, batch: course.batch, sessionId: course.sessionId, sessionName: course.sessionName, semester: course.semester, facultyId: course.facultyId || null, facultyName: course.facultyName || '', assignedByName: course.assignedByName || '' }, students: roster.map(publicStudent).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })), eligibleStudents, teams, projects: projects.map(project => ({ id: project._id, name: project.name, status: project.status, progressPercentage: project.progressPercentage || 0, githubUrl: project.githubUrl || project.repositoryUrl || '', courseCode: project.courseCode || course.code })) });
@@ -1495,9 +1517,13 @@ app.put('/faculty/courses/:id/teams/:teamId/status', authenticate, requireFacult
     const allowed = ['Not started', 'In progress', 'Submitted', 'Under review', 'Completed'];
     const projectStatus = String(req.body.projectStatus || '');
     if (!allowed.includes(projectStatus)) return res.status(400).json({ error: 'Choose a valid project status' });
-    const progressPercentage = Math.max(0, Math.min(100, Number(req.body.progressPercentage) || 0));
-    await courseTeamsCollection.updateOne({ _id: team._id }, { $set: { projectStatus, progressPercentage, statusUpdatedBy: req.user.id, statusUpdatedAt: new Date().toISOString() } });
-    res.json({ id: team._id, projectStatus, progressPercentage });
+    const hasProgress = req.body.progressPercentage !== undefined && req.body.progressPercentage !== null && String(req.body.progressPercentage).trim() !== '';
+    const parsedProgress = hasProgress ? Number(req.body.progressPercentage) : null;
+    if (hasProgress && !Number.isFinite(parsedProgress)) return res.status(400).json({ error: 'Progress must be a number between 0 and 100' });
+    const update = { projectStatus, statusUpdatedBy: req.user.id, statusUpdatedAt: new Date().toISOString() };
+    if (hasProgress) update.progressPercentage = Math.max(0, Math.min(100, parsedProgress));
+    await courseTeamsCollection.updateOne({ _id: team._id }, { $set: update });
+    res.json({ id: team._id, projectStatus, progressPercentage: hasProgress ? update.progressPercentage : team.progressPercentage ?? null });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

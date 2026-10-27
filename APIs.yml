@@ -1,4 +1,4 @@
-version: "2.4.0"
+version: "2.5.0"
 info:
   title: "ProjectFlow API Specification"
   description: "REST API documentation for the ProjectFlow academic project platform, including student, faculty, coordinator, and institution workflows."
@@ -766,7 +766,7 @@ endpoints:
     summary: "List institution courses"
     authentication: { required: true, type: "Bearer JWT" }
     authorization: { roles: ["Coordinator", "Admin"], rules: ["Coordinator sees courses with their institutionId only."] }
-    responses: { 200: { description: "Institution courses with branch, batch, session, and faculty assignment fields" }, 403: { description: "Coordinator access required" } }
+    responses: { 200: { description: "Institution courses with exact program, branch, batch, session, and faculty assignment fields" }, 403: { description: "Coordinator access required" } }
 
   - path: "/api/coordinator/courses"
     method: "POST"
@@ -774,11 +774,11 @@ endpoints:
     service: "project-service"
     summary: "Create institution course using the existing course collection"
     authentication: { required: true, type: "Bearer JWT" }
-    authorization: { roles: ["Coordinator", "Admin"], rules: ["Branch, batch, and session must belong together in the same institution.", "Course code must be unique within the institution."] }
+    authorization: { roles: ["Coordinator", "Admin"], rules: ["Branch, program, batch, and session must belong together in the same institution.", "Course code must be unique within the institution."] }
     requestBody:
       contentType: "application/json"
       required: true
-      example: { name: "Web Services", code: "CS543", branchId: "branch-id", batchId: "batch-id", sessionId: "session-id", semester: "Semester 3", description: "" }
+      example: { name: "Web Services", code: "CS543", branchId: "branch-id", program: "B.Tech", batchId: "batch-id", sessionId: "session-id", semester: "Semester 3", description: "" }
     responses: { 201: { description: "Course created" }, 400: { description: "Missing fields or incompatible academic relationships" }, 403: { description: "Institution access denied" }, 409: { description: "Course code already exists in institution" } }
 
   - path: "/api/coordinator/courses/{id}"
@@ -788,8 +788,8 @@ endpoints:
     summary: "Update an institution course"
     authentication: { required: true, type: "Bearer JWT" }
     authorization: { roles: ["Coordinator", "Admin"], rules: ["Only courses belonging to the caller's institution may be edited."] }
-    requestBody: { contentType: "application/json", required: true, example: { name: "Web Services", semester: "Semester 3", description: "" } }
-    responses: { 200: { description: "Course updated" }, 400: { description: "Invalid course name" }, 404: { description: "Course not found in institution" } }
+    requestBody: { contentType: "application/json", required: true, example: { name: "Web Services", program: "B.Tech", semester: "Semester 3", description: "" } }
+    responses: { 200: { description: "Course updated" }, 400: { description: "Invalid course name or branch program" }, 404: { description: "Course not found in institution" } }
 
   - path: "/api/coordinator/assignments"
     method: "GET"
@@ -951,7 +951,7 @@ endpoints:
     summary: "List faculty-assigned courses or institution courses for a coordinator"
     authentication: { required: true, type: "Bearer JWT" }
     authorization: { roles: ["Faculty", "Coordinator", "Admin"], rules: ["Faculty see their assigned courses; coordinators see courses within their institution."] }
-    responses: { 200: { description: "Course cards including assignment, batch, branch, project brief and team rules" }, 403: { description: "Faculty or coordinator access required" } }
+    responses: { 200: { description: "Course cards include program, coordinator assigner, batch, branch, total teams, pending lab reviews, and active lab-task counts" }, 403: { description: "Faculty or coordinator access required" } }
 
   - path: "/api/faculty/courses/{id}"
     method: "GET"
@@ -960,7 +960,7 @@ endpoints:
     summary: "Get course roster, eligible students, teams and tracked projects"
     authentication: { required: true, type: "Bearer JWT" }
     authorization: { roles: ["Faculty", "Coordinator", "Admin"], rules: ["Faculty must be assigned to the course; coordinators are scoped to their institution."] }
-    responses: { 200: { description: "Course details with student names, roll numbers, profile images, teams and GitHub evidence" }, 404: { description: "Course outside the caller's teaching scope" } }
+    responses: { 200: { description: "Course details with student identity/GitHub profile, teams with permanent database Team IDs and separate lowest-roll display codes, actual project status/progress when recorded, and live GitHub evidence" }, 404: { description: "Course outside the caller's teaching scope" } }
 
   - path: "/api/faculty/courses/{id}/rules"
     method: "PUT"
@@ -986,11 +986,11 @@ endpoints:
     method: "PUT"
     category: "Faculty Teaching Workspace"
     service: "project-service"
-    summary: "Update project team status and progress percentage"
+    summary: "Update project team status and optional progress percentage"
     authentication: { required: true, type: "Bearer JWT" }
     authorization: { roles: ["Faculty", "Coordinator", "Admin"] }
     requestBody: { contentType: "application/json", required: true, example: { projectStatus: "In progress", progressPercentage: 45 } }
-    responses: { 200: { description: "Team status and progress saved" }, 404: { description: "Team outside the course" } }
+    responses: { 200: { description: "Team status saved; progress is changed only when a numeric progressPercentage is supplied" }, 404: { description: "Team outside the course" } }
 
   - path: "/api/faculty/courses/{id}/teams/{teamId}/repository"
     method: "PUT"
@@ -1002,11 +1002,59 @@ endpoints:
     requestBody: { contentType: "application/json", required: true, example: { githubUrl: "https://github.com/org/team-project" } }
     responses: { 200: { description: "Repository URL saved" }, 400: { description: "Invalid GitHub repository URL" } }
 
+  - path: "/api/faculty/courses/{id}/labs"
+    method: "GET"
+    category: "Faculty Teaching Workspace"
+    service: "project-service"
+    summary: "List timed lab tasks, team submissions, and review state for an assigned course"
+    authentication: { required: true, type: "Bearer JWT" }
+    authorization: { roles: ["Faculty", "Coordinator", "Admin"], rules: ["Faculty must be assigned to the course; coordinators are scoped to their institution."] }
+    responses: { 200: { description: "Labs and uploaded team work for in-scope course" }, 404: { description: "Course outside the caller's teaching scope" } }
+
+  - path: "/api/faculty/courses/{id}/labs"
+    method: "POST"
+    category: "Faculty Teaching Workspace"
+    service: "project-service"
+    summary: "Start a one-hour or two-hour timed lab for an assigned course"
+    authentication: { required: true, type: "Bearer JWT" }
+    authorization: { roles: ["Faculty", "Coordinator", "Admin"] }
+    requestBody: { contentType: "application/json", required: true, example: { title: "Build a REST endpoint", instructions: "Implement and upload the endpoint.", durationMinutes: 60 } }
+    responses: { 201: { description: "Timed lab task created and opened" }, 400: { description: "Invalid task details or duration" } }
+
+  - path: "/api/faculty/courses/{id}/labs/{labId}/submissions/{submissionId}/review"
+    method: "PUT"
+    category: "Faculty Teaching Workspace"
+    service: "project-service"
+    summary: "Review a team lab submission and save feedback"
+    authentication: { required: true, type: "Bearer JWT" }
+    authorization: { roles: ["Faculty", "Coordinator", "Admin"] }
+    requestBody: { contentType: "application/json", required: true, example: { status: "Reviewed", feedback: "The endpoint meets the requirements." } }
+    responses: { 200: { description: "Review state and feedback saved" }, 404: { description: "Submission outside the course" } }
+
+  - path: "/api/courses/{id}/labs/{labId}/submissions"
+    method: "POST"
+    category: "Student Course Labs"
+    service: "project-service"
+    summary: "Submit or update the active team's timed lab work"
+    authentication: { required: true, type: "Bearer JWT" }
+    authorization: { roles: ["Student"], rules: ["Student must be enrolled in the course and belong to a team; submission closes when the timer expires."] }
+    requestBody: { contentType: "application/json", required: true, example: { content: "Implementation notes", fileName: "solution.py", mimeType: "text/x-python", fileData: "data:text/x-python;base64,..." } }
+    responses: { 201: { description: "Team submission saved" }, 403: { description: "No eligible team or course membership" }, 409: { description: "Timed lab is closed" } }
+
+  - path: "/api/courses/{id}/labs"
+    method: "GET"
+    category: "Student Course Labs"
+    service: "project-service"
+    summary: "List timed labs assigned to an enrolled student's course"
+    authentication: { required: true, type: "Bearer JWT" }
+    authorization: { roles: ["Student"], rules: ["Student must be enrolled in the course; team submissions are scoped to the caller's team."] }
+    responses: { 200: { description: "Active and closed lab tasks with the caller's team submission status" }, 403: { description: "Student is not enrolled in the course" } }
+
   - path: "/api/notifications/faculty/course"
     method: "POST"
     category: "Faculty Teaching Workspace"
     service: "notification-service"
-    summary: "Message all course students or a specific project team"
+    summary: "Message one class, a specific project team, or students across all faculty-assigned classes"
     authentication: { required: true, type: "Bearer JWT" }
     authorization: { roles: ["Faculty", "Coordinator", "Admin"], rules: ["Faculty must be assigned to the course; coordinators are scoped to their institution."] }
     requestBody: { contentType: "application/json", required: true, example: { courseId: "course-id", audience: "team", teamId: "team-id", title: "Review meeting", message: "Meet at 2 PM." } }
