@@ -124,6 +124,7 @@ export const api = {
   updateFacultyCourseRules: (id, data) => request(`/faculty/courses/${id}/rules`, { method: 'PUT', body: JSON.stringify(data) }),
   enrollFacultyCourseStudents: (id, studentIds) => request(`/faculty/courses/${id}/students`, { method: 'POST', body: JSON.stringify({ studentIds }) }),
   updateFacultyTeamStatus: (courseId, teamId, data) => request(`/faculty/courses/${courseId}/teams/${teamId}/status`, { method: 'PUT', body: JSON.stringify(data) }),
+  updateFacultyTeamRepository: (courseId, teamId, githubUrl) => request(`/faculty/courses/${courseId}/teams/${teamId}/repository`, { method: 'PUT', body: JSON.stringify({ githubUrl }) }),
 
   // Academic Courses (Google Classroom Model)
   getCourses: (params = {}) => {

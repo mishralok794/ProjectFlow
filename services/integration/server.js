@@ -18,6 +18,11 @@ let pullsCollection;
 let issuesCollection;
 let contributorsCollection;
 let syncLogsCollection;
+let usersCollection;
+let projectsCollection;
+let projectMembersCollection;
+let courseTeamsCollection;
+let coursesCollection;
 let eventBus;
 
 // Sample demo datasets for instant sandbox testing when GitHub API rate limits or tokens are not configured
@@ -211,6 +216,27 @@ app.post('/github/connect', authenticate, async (req, res) => {
     if (!projectId) {
       return res.status(400).json({ error: 'projectId is required' });
     }
+
+    const actor = await usersCollection.findOne({ _id: String(req.user.id), status: 'active' });
+    if (!actor) return res.status(403).json({ error: 'Active account required to connect a repository' });
+    let canConnect = actor.role === 'Admin';
+    const courseTeam = await courseTeamsCollection.findOne({ _id: String(projectId) });
+    if (courseTeam) {
+      const course = await coursesCollection.findOne({ _id: String(courseTeam.courseId) });
+      const isCoordinator = actor.role === 'Coordinator' && String(actor.institutionId) === String(course?.institutionId);
+      const isFaculty = actor.role === 'Faculty' && String(actor._id) === String(course?.facultyId) && String(actor.institutionId) === String(course?.institutionId);
+      const isTeamMember = (courseTeam.members || []).some(member => String(member.email || '').toLowerCase() === String(actor.email || '').toLowerCase());
+      canConnect = canConnect || isCoordinator || isFaculty || (actor.role === 'Student' && isTeamMember);
+    } else {
+      const project = await projectsCollection.findOne({ _id: String(projectId) });
+      if (project) {
+        const isFaculty = actor.role === 'Faculty' && String(project.facultyId) === String(actor._id);
+        const isStudentLead = actor.role === 'Student' && String(project.leadId) === String(actor._id);
+        const isProjectMember = actor.role === 'Student' && Boolean(await projectMembersCollection.findOne({ projectId: String(projectId), userId: String(actor._id) }));
+        canConnect = canConnect || isFaculty || isStudentLead || isProjectMember;
+      }
+    }
+    if (!canConnect) return res.status(403).json({ error: 'You do not have permission to connect a repository to this project or team' });
 
     let repoOwner = owner;
     let repoName = repo;
@@ -682,6 +708,13 @@ async function startServer() {
   issuesCollection = db.collection('issues');
   contributorsCollection = db.collection('contributors');
   syncLogsCollection = db.collection('syncLogs');
+  const authDb = await createDatabase('integration-auth', 'auth_db');
+  usersCollection = authDb.collection('users');
+  const projectDb = await createDatabase('integration-projects', 'project_db');
+  projectsCollection = projectDb.collection('projects');
+  projectMembersCollection = projectDb.collection('teamMembers');
+  courseTeamsCollection = projectDb.collection('courseTeams');
+  coursesCollection = projectDb.collection('courses');
   eventBus = await createEventBus('integration-service');
 
   app.listen(PORT, () => {

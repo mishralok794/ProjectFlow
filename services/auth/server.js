@@ -602,8 +602,10 @@ app.put('/auth/profile', authenticate, async (req, res) => {
     for (const field of allowed) if (req.body[field] !== undefined) update[field] = String(req.body[field]).trim();
     if (update.name !== undefined && !update.name) return res.status(400).json({ error: 'Name cannot be empty' });
     if (update.avatarUrl) {
-      try { if (!['http:', 'https:'].includes(new URL(update.avatarUrl).protocol)) throw new Error(); }
-      catch { return res.status(400).json({ error: 'Profile photo must be an http or https image URL' }); }
+      const isDataImage = /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(update.avatarUrl) && update.avatarUrl.length <= 7_000_000;
+      let isWebImage = false;
+      try { isWebImage = ['http:', 'https:'].includes(new URL(update.avatarUrl).protocol); } catch { /* data URI handled above */ }
+      if (!isDataImage && !isWebImage) return res.status(400).json({ error: 'Profile photo must be an http(s) image URL or an image upload up to 5 MB' });
     }
     if (update.gender && !['Female', 'Male', 'Non-binary', 'Prefer not to say'].includes(update.gender)) return res.status(400).json({ error: 'Choose a valid profile gender option' });
     if (update.rollNumber) {

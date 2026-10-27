@@ -1327,7 +1327,7 @@ app.get('/faculty/courses/:id', authenticate, requireFacultyWorkspaceAccess, asy
     }
     const publicStudent = student => ({ id: student._id, name: student.name, email: student.email, rollNumber: student.rollNumber || '', department: student.department || '', batch: student.batch || '', avatarUrl: student.avatarUrl || '', institutionId: student.institutionId || null, branchId: student.branchId || null });
     const studentMap = new Map([...eligibleRows, ...roster].map(student => [String(student.email || '').toLowerCase(), publicStudent(student)]));
-    const teams = teamRows.map(team => ({ id: team._id || team.id, name: team.name, description: team.description || '', status: team.status || 'Available', projectStatus: team.projectStatus || 'Not started', progressPercentage: Number(team.progressPercentage) || 0, maxMembers: team.maxMembers || course.teamRules?.maxMembers || 5, members: (team.members || []).map(member => ({ ...member, ...(studentMap.get(String(member.email || '').toLowerCase()) || {}) })), createdAt: team.createdAt }));
+    const teams = teamRows.map(team => ({ id: team._id || team.id, name: team.name, description: team.description || '', status: team.status || 'Available', projectStatus: team.projectStatus || 'Not started', progressPercentage: Number(team.progressPercentage) || 0, maxMembers: team.maxMembers || course.teamRules?.maxMembers || 5, githubUrl: team.githubUrl || '', members: (team.members || []).map(member => ({ ...member, ...(studentMap.get(String(member.email || '').toLowerCase()) || {}) })), createdAt: team.createdAt }));
     const eligibleStudents = eligibleRows.filter(student => !roster.some(enrolled => String(enrolled._id) === String(student._id))).map(publicStudent).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
     res.json({ course: { id: course._id, code: course.code, name: course.name, description: course.description || '', projectBrief: course.projectBrief || '', teamRules: course.teamRules || { minMembers: 4, maxMembers: 5, minFemaleMembers: 0 }, projectDeadline: course.projectDeadline || null, institutionId: course.institutionId, branchId: course.branchId, branchName: course.branchName, batchId: course.batchId, batch: course.batch, sessionId: course.sessionId, sessionName: course.sessionName, semester: course.semester, facultyId: course.facultyId || null, facultyName: course.facultyName || '' }, students: roster.map(publicStudent).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })), eligibleStudents, teams, projects: projects.map(project => ({ id: project._id, name: project.name, status: project.status, progressPercentage: project.progressPercentage || 0, githubUrl: project.githubUrl || project.repositoryUrl || '', courseCode: project.courseCode || course.code })) });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -1343,7 +1343,9 @@ app.put('/faculty/courses/:id/rules', authenticate, requireFacultyWorkspaceAcces
     if (!Number.isInteger(minMembers) || !Number.isInteger(maxMembers) || minMembers < 2 || maxMembers > 10 || minMembers > maxMembers) return res.status(400).json({ error: 'Team size must be between 2 and 10, with minimum no greater than maximum' });
     if (!Number.isInteger(minFemaleMembers) || minFemaleMembers < 0 || minFemaleMembers > maxMembers) return res.status(400).json({ error: 'Minimum women members must be between 0 and the maximum team size' });
     const projectBrief = String(req.body.projectBrief || '').trim();
-    const projectDeadline = req.body.projectDeadline ? new Date(req.body.projectDeadline).toISOString() : null;
+    const deadlineDate = req.body.projectDeadline ? new Date(req.body.projectDeadline) : null;
+    if (deadlineDate && Number.isNaN(deadlineDate.getTime())) return res.status(400).json({ error: 'Project deadline must be a valid date' });
+    const projectDeadline = deadlineDate ? deadlineDate.toISOString() : null;
     if (projectBrief.length > 5000) return res.status(400).json({ error: 'Project brief cannot exceed 5,000 characters' });
     const update = { teamRules: { minMembers, maxMembers, minFemaleMembers }, projectBrief, projectDeadline };
     await coursesCollection.updateOne({ _id: course._id }, { $set: update });
@@ -1378,6 +1380,27 @@ app.put('/faculty/courses/:id/teams/:teamId/status', authenticate, requireFacult
     const progressPercentage = Math.max(0, Math.min(100, Number(req.body.progressPercentage) || 0));
     await courseTeamsCollection.updateOne({ _id: team._id }, { $set: { projectStatus, progressPercentage, statusUpdatedBy: req.user.id, statusUpdatedAt: new Date().toISOString() } });
     res.json({ id: team._id, projectStatus, progressPercentage });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put('/faculty/courses/:id/teams/:teamId/repository', authenticate, requireFacultyWorkspaceAccess, async (req, res) => {
+  try {
+    const course = await coursesCollection.findOne({ _id: req.params.id });
+    if (!course || !canManageFacultyCourse(req.user, course)) return res.status(404).json({ error: 'Course not found in your teaching scope' });
+    const team = await courseTeamsCollection.findOne({ _id: req.params.teamId, courseId: course._id });
+    if (!team) return res.status(404).json({ error: 'Project team not found in this course' });
+    const rawUrl = String(req.body.githubUrl || '').trim();
+    let githubUrl = '';
+    if (rawUrl) {
+      try {
+        const parsed = new URL(rawUrl);
+        const segments = parsed.pathname.split('/').filter(Boolean);
+        if (parsed.hostname !== 'github.com' || segments.length !== 2 || !/^[A-Za-z0-9_.-]+$/.test(segments[0]) || !/^[A-Za-z0-9_.-]+$/.test(segments[1])) throw new Error();
+        githubUrl = `https://github.com/${segments[0]}/${segments[1]}`;
+      } catch { return res.status(400).json({ error: 'Enter a valid GitHub repository URL, such as https://github.com/owner/repository' }); }
+    }
+    await courseTeamsCollection.updateOne({ _id: team._id }, { $set: { githubUrl, githubUpdatedBy: req.user.id, githubUpdatedAt: new Date().toISOString() } });
+    res.json({ teamId: team._id, githubUrl });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

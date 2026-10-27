@@ -147,15 +147,17 @@ curl http://localhost:5000/health
 
 This repository is pre-configured with `netlify.toml` and `_redirects` for turnkey deployment on Netlify:
 
-1. **Import Repository**: In your Netlify dashboard, connect this GitHub repository (`TargetUltimate-Alka/projectFlow`).
+1. **Import Repository**: In your Netlify dashboard, connect `mishralok794/ProjectFlow`.
 2. **Build Settings**: Netlify automatically detects the configuration from `netlify.toml`:
    - **Base directory**: `client`
    - **Build command**: `npm run build`
    - **Publish directory**: `dist` (or `client/dist` if base is repository root)
 3. **Client-Side Routing**: Handled automatically via `_redirects` and `netlify.toml` (`/* /index.html 200`).
 4. **API Integration**:
-   - For standalone static demo & evaluation (e.g. grading or preview), the frontend includes an automatic offline demo dataset supporting all 1-Click Instant Demo roles (Student, Faculty, Coordinator).
-   - To connect to a live hosted backend (e.g. on Render, Railway, or AWS), set the environment variable in Netlify Site Settings: `VITE_API_URL=https://your-backend-api.com/api`.
+   - Netlify hosts the frontend only. The API gateway and Auth, Project, Integration, Task, Evaluation, and Notification services need a separate backend host, with a reachable MongoDB instance.
+   - Configure the backend services with `MONGODB_URI`, a private `JWT_SECRET`, and each service's `*_SERVICE_URL` gateway setting. The gateway must be the public API entry point.
+   - Set `VITE_API_URL=https://your-backend-api.com/api` in Netlify Site Settings, using the deployed gateway URL. Without this setting and a running backend, `/api` requests fall through to the single-page app and return HTML.
+   - The Faculty Teaching Workspace, team messaging, profile saves, and live GitHub evidence require the live backend. In a static preview, these API-backed actions are unavailable.
 
 
 ## Documentation

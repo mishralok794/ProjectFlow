@@ -2,8 +2,8 @@ version: "2.4.0"
 info:
   title: "ProjectFlow API Specification"
   description: "REST API documentation for the ProjectFlow academic project platform, including student, faculty, coordinator, and institution workflows."
-  feature: "Coordinator Portal: Institution and Academic Setup"
-  lastUpdated: "2026-10-27"
+  feature: "Faculty Teaching Workspace and Coordinator Portal"
+  lastUpdated: "2026-10-28"
 
 # ========================================================
 # 1. API CATEGORIZATION SUMMARY
@@ -467,7 +467,7 @@ endpoints:
     category: "New API Introduced (Step 3)"
     service: "project-service"
     summary: "Create a new course team"
-    description: "Validates member identities, roll number/email consistency, batch matching, course enrollment, single-team rule, and team size (4-5 members). Caller is assigned as Team Lead."
+    description: "Validates member identities, roll number/email consistency, batch matching, course enrollment, single-team rule, and the faculty-configured team size and minimum women-member rule. Caller is assigned as Team Lead."
     authentication:
       required: true
       type: "Bearer JWT"
@@ -943,3 +943,71 @@ endpoints:
       201: { description: "One notification created per recipient, with sent count" }
       400: { description: "Invalid audience, title, message, or no matching branch members" }
       403: { description: "Coordinator access required" }
+
+  - path: "/api/faculty/courses"
+    method: "GET"
+    category: "Faculty Teaching Workspace"
+    service: "project-service"
+    summary: "List faculty-assigned courses or institution courses for a coordinator"
+    authentication: { required: true, type: "Bearer JWT" }
+    authorization: { roles: ["Faculty", "Coordinator", "Admin"], rules: ["Faculty see their assigned courses; coordinators see courses within their institution."] }
+    responses: { 200: { description: "Course cards including assignment, batch, branch, project brief and team rules" }, 403: { description: "Faculty or coordinator access required" } }
+
+  - path: "/api/faculty/courses/{id}"
+    method: "GET"
+    category: "Faculty Teaching Workspace"
+    service: "project-service"
+    summary: "Get course roster, eligible students, teams and tracked projects"
+    authentication: { required: true, type: "Bearer JWT" }
+    authorization: { roles: ["Faculty", "Coordinator", "Admin"], rules: ["Faculty must be assigned to the course; coordinators are scoped to their institution."] }
+    responses: { 200: { description: "Course details with student names, roll numbers, profile images, teams and GitHub evidence" }, 404: { description: "Course outside the caller's teaching scope" } }
+
+  - path: "/api/faculty/courses/{id}/rules"
+    method: "PUT"
+    category: "Faculty Teaching Workspace"
+    service: "project-service"
+    summary: "Set project instructions, deadline, team-size and team-composition rules"
+    authentication: { required: true, type: "Bearer JWT" }
+    authorization: { roles: ["Faculty", "Coordinator", "Admin"] }
+    requestBody: { contentType: "application/json", required: true, example: { teamRules: { minMembers: 3, maxMembers: 5, minFemaleMembers: 1 }, projectBrief: "Build a campus services app", projectDeadline: "2026-12-15" } }
+    responses: { 200: { description: "Rules saved and enforced when students create teams" }, 400: { description: "Invalid team rules or deadline" }, 404: { description: "Course outside the caller's teaching scope" } }
+
+  - path: "/api/faculty/courses/{id}/students"
+    method: "POST"
+    category: "Faculty Teaching Workspace"
+    service: "project-service"
+    summary: "Enroll active branch students in a course"
+    authentication: { required: true, type: "Bearer JWT" }
+    authorization: { roles: ["Faculty", "Coordinator", "Admin"] }
+    requestBody: { contentType: "application/json", required: true, example: { studentIds: ["student-id"] } }
+    responses: { 200: { description: "Students enrolled; course access updated" }, 400: { description: "No students selected or students are outside the course branch" } }
+
+  - path: "/api/faculty/courses/{id}/teams/{teamId}/status"
+    method: "PUT"
+    category: "Faculty Teaching Workspace"
+    service: "project-service"
+    summary: "Update project team status and progress percentage"
+    authentication: { required: true, type: "Bearer JWT" }
+    authorization: { roles: ["Faculty", "Coordinator", "Admin"] }
+    requestBody: { contentType: "application/json", required: true, example: { projectStatus: "In progress", progressPercentage: 45 } }
+    responses: { 200: { description: "Team status and progress saved" }, 404: { description: "Team outside the course" } }
+
+  - path: "/api/faculty/courses/{id}/teams/{teamId}/repository"
+    method: "PUT"
+    category: "Faculty Teaching Workspace"
+    service: "project-service"
+    summary: "Attach a GitHub repository URL to a course team"
+    authentication: { required: true, type: "Bearer JWT" }
+    authorization: { roles: ["Faculty", "Coordinator", "Admin"] }
+    requestBody: { contentType: "application/json", required: true, example: { githubUrl: "https://github.com/org/team-project" } }
+    responses: { 200: { description: "Repository URL saved" }, 400: { description: "Invalid GitHub repository URL" } }
+
+  - path: "/api/notifications/faculty/course"
+    method: "POST"
+    category: "Faculty Teaching Workspace"
+    service: "notification-service"
+    summary: "Message all course students or a specific project team"
+    authentication: { required: true, type: "Bearer JWT" }
+    authorization: { roles: ["Faculty", "Coordinator", "Admin"], rules: ["Faculty must be assigned to the course; coordinators are scoped to their institution."] }
+    requestBody: { contentType: "application/json", required: true, example: { courseId: "course-id", audience: "team", teamId: "team-id", title: "Review meeting", message: "Meet at 2 PM." } }
+    responses: { 201: { description: "One notification created per student recipient" }, 403: { description: "Course messaging permission denied" } }
