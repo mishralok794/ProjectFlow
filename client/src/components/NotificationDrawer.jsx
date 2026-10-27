@@ -50,6 +50,7 @@ export function NotificationDrawer({ isOpen, onClose }) {
       case 'milestone': return <Award size={16} className="text-emerald-400" style={{ color: '#10b981' }} />;
       case 'evaluation': return <CheckCircle2 size={16} className="text-violet-400" style={{ color: '#a78bfa' }} />;
       case 'task': return <Clock size={16} className="text-amber-400" style={{ color: '#f59e0b' }} />;
+      case 'announcement': return <ShieldAlert size={16} style={{ color: '#a78bfa' }} />;
       default: return <Bell size={16} className="text-slate-400" />;
     }
   };
@@ -169,6 +170,7 @@ export function NotificationDrawer({ isOpen, onClose }) {
                       <span>{formatTime(item.createdAt)}</span>
                       <span>•</span>
                       <span style={{ textTransform: 'capitalize' }}>{item.type}</span>
+                      {item.branchName && <><span>•</span><span>{item.branchName}</span></>}
                     </div>
                   </div>
                 </div>

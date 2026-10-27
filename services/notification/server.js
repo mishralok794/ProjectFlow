@@ -3,6 +3,7 @@ const cors = require('cors');
 const { createDatabase } = require('../../shared/db');
 const { createEventBus } = require('../../shared/eventBus');
 const { authenticate } = require('../../shared/authMiddleware');
+const crypto = require('crypto');
 
 const app = express();
 app.use(cors());
@@ -12,6 +13,8 @@ const PORT = process.env.NOTIFICATION_PORT || 5006;
 
 let db;
 let notificationsCollection;
+let usersCollection;
+let branchesCollection;
 let eventBus;
 
 // Seed initial notifications if empty
@@ -117,9 +120,37 @@ app.put('/notifications/read-all', authenticate, async (req, res) => {
   }
 });
 
+app.post('/notifications/coordinator/branch', authenticate, async (req, res) => {
+  try {
+    const sender = await usersCollection.findOne({ _id: req.user.id, status: 'active' });
+    if (!sender || !['Coordinator', 'Admin'].includes(sender.role)) return res.status(403).json({ error: 'Coordinator access is required' });
+    const branchId = String(req.body.branchId || '');
+    const audience = String(req.body.audience || '');
+    const title = String(req.body.title || '').trim();
+    const message = String(req.body.message || '').trim();
+    if (!['faculty', 'students', 'all'].includes(audience)) return res.status(400).json({ error: 'Choose faculty, students, or all branch members' });
+    if (!title || title.length > 120 || !message || message.length > 2000) return res.status(400).json({ error: 'Add a title (up to 120 characters) and message (up to 2,000 characters)' });
+    const branchFilter = sender.role === 'Admin' ? { _id: branchId, status: 'active' } : { _id: branchId, institutionId: sender.institutionId, status: 'active' };
+    const branch = await branchesCollection.findOne(branchFilter);
+    if (!branch) return res.status(404).json({ error: 'Branch not found in your institution' });
+    const roles = audience === 'faculty' ? ['Faculty'] : audience === 'students' ? ['Student'] : ['Faculty', 'Student'];
+    const recipients = (await usersCollection.find({ institutionId: branch.institutionId, branchId, role: { $in: roles }, status: 'active' }).toArray()).map(({ _id }) => ({ _id }));
+    if (!recipients.length) return res.status(400).json({ error: 'No active members in this branch match the selected audience yet' });
+    const createdAt = new Date().toISOString();
+    await notificationsCollection.insertMany(recipients.map(({ _id }) => ({
+      _id: crypto.randomUUID(), userId: String(_id), title, message, type: 'announcement', read: false,
+      institutionId: branch.institutionId, branchId, branchName: branch.name, createdBy: String(sender._id), createdAt
+    })));
+    res.status(201).json({ sent: recipients.length, branchName: branch.name, audience });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 async function startServer() {
   db = await createDatabase('notification-service', 'notification_db');
   notificationsCollection = db.collection('notifications');
+  const authDb = await createDatabase('notification-auth', 'auth_db');
+  usersCollection = authDb.collection('users');
+  branchesCollection = authDb.collection('branches');
   await seedInitialNotifications();
 
   eventBus = await createEventBus('notification-service');

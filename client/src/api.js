@@ -102,7 +102,7 @@ export const api = {
   createInstitution: (data) => request('/institutions', { method: 'POST', body: JSON.stringify(data) }),
   updateCoordinatorInstitution: (id, data) => request(`/coordinator/institutions/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   getInstitutionMembership: (id) => request(`/institutions/${id}/membership`),
-  requestInstitutionMembership: (id) => request(`/institutions/${id}/membership`, { method: 'POST', body: JSON.stringify({}) }),
+  requestInstitutionMembership: (id, branchId) => request(`/institutions/${id}/membership`, { method: 'POST', body: JSON.stringify({ branchId }) }),
   getCoordinatorOverview: () => request('/coordinator/overview'),
   getCoordinatorCourses: () => request('/coordinator/courses'),
   createCoordinatorCourse: (data) => request('/coordinator/courses', { method: 'POST', body: JSON.stringify(data) }),
@@ -337,5 +337,8 @@ export const api = {
     request(`/notifications/${id}/read`, { method: 'PUT' }, () => mockService.markNotificationRead(id)),
 
   markAllNotificationsRead: () =>
-    request('/notifications/read-all', { method: 'PUT' }, () => mockService.markAllNotificationsRead())
+    request('/notifications/read-all', { method: 'PUT' }, () => mockService.markAllNotificationsRead()),
+
+  sendCoordinatorBranchMessage: (data) =>
+    request('/notifications/coordinator/branch', { method: 'POST', body: JSON.stringify(data) })
 };

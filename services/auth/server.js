@@ -14,7 +14,7 @@ const {
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
 const PORT = process.env.AUTH_PORT || 5001;
 
@@ -56,6 +56,46 @@ function coordinatorInstitutionFilter(req) {
   return { institutionId: req.user.institutionId };
 }
 
+const MAX_INLINE_MEDIA_BYTES = 6 * 1024 * 1024;
+function mediaByteLength(value) {
+  if (typeof value !== 'string' || !value.startsWith('data:')) return 0;
+  const comma = value.indexOf(',');
+  if (comma < 0 || !value.slice(0, comma).endsWith(';base64')) return Infinity;
+  const payload = value.slice(comma + 1);
+  const padding = payload.endsWith('==') ? 2 : payload.endsWith('=') ? 1 : 0;
+  return Math.floor(payload.length * 3 / 4) - padding;
+}
+
+function isHttpUrl(value) {
+  try { return ['http:', 'https:'].includes(new URL(String(value)).protocol); }
+  catch { return false; }
+}
+
+function validateInstitutionMedia(input) {
+  const gallery = Array.isArray(input.gallery) ? input.gallery : [];
+  if (gallery.length > 12) return 'Gallery can contain at most 12 images';
+  const imageValues = [input.logoUrl, input.coverUrl, ...gallery.map(item => typeof item === 'string' ? item : item?.url)].filter(Boolean);
+  let embeddedBytes = 0;
+  for (const value of imageValues) {
+    if (String(value).startsWith('data:')) {
+      if (!/^data:image\/(png|jpeg|webp);base64,/i.test(value)) return 'Uploaded images must be PNG, JPEG, or WebP';
+      const bytes = mediaByteLength(value);
+      if (bytes > 2 * 1024 * 1024) return 'Each uploaded image must be 2 MB or smaller';
+      embeddedBytes += bytes;
+    } else if (!isHttpUrl(value)) return 'Image links must be valid http or https URLs';
+  }
+  if (input.videoUrl) {
+    if (String(input.videoUrl).startsWith('data:')) {
+      if (!/^data:video\/(mp4|webm);base64,/i.test(input.videoUrl)) return 'Uploaded videos must be MP4 or WebM';
+      const bytes = mediaByteLength(input.videoUrl);
+      if (bytes > 4 * 1024 * 1024) return 'The short video must be 4 MB or smaller';
+      embeddedBytes += bytes;
+    } else if (!isHttpUrl(input.videoUrl)) return 'Video links must be valid http or https URLs';
+  }
+  if (embeddedBytes > MAX_INLINE_MEDIA_BYTES) return 'Total uploaded media must be 6 MB or smaller';
+  return null;
+}
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({ service: 'auth-service', status: 'healthy', dbType: db.type });
@@ -94,10 +134,9 @@ app.post('/auth/register', async (req, res) => {
       if (sameName.some(item => (item.normalizedCity || String(item.city || '').trim().toLowerCase()) === normalizedCity)) {
         return res.status(409).json({ error: 'This institution already exists. Use the institution directory or contact its current coordinator.' });
       }
-      const urls = [institutionInput.website, institutionInput.logoUrl, institutionInput.coverUrl].filter(Boolean);
-      if (urls.some(url => { try { return !['http:', 'https:'].includes(new URL(String(url)).protocol); } catch { return true; } })) {
-        return res.status(400).json({ error: 'Website and image links must be valid http or https URLs' });
-      }
+      if (institutionInput.website && !isHttpUrl(institutionInput.website)) return res.status(400).json({ error: 'Website must be a valid http or https URL' });
+      const mediaError = validateInstitutionMedia(institutionInput);
+      if (mediaError) return res.status(400).json({ error: mediaError });
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
@@ -131,7 +170,8 @@ app.post('/auth/register', async (req, res) => {
         description: String(institutionInput.description || '').trim(),
         logoUrl: String(institutionInput.logoUrl || '').trim(),
         coverUrl: String(institutionInput.coverUrl || '').trim(),
-        gallery: [],
+        videoUrl: String(institutionInput.videoUrl || '').trim(),
+        gallery: Array.isArray(institutionInput.gallery) ? institutionInput.gallery.slice(0, 12) : [],
         status: 'active',
         createdBy: result.insertedId,
         createdAt: new Date().toISOString()
@@ -300,9 +340,18 @@ app.get('/institutions', async (req, res) => {
   try {
     const query = String(req.query.search || '').trim();
     const filter = { status: 'active' };
-    if (query) filter.name = { $regex: query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' };
-    const institutions = await institutionsCollection.find(filter).sort({ name: 1 }).limit(50).toArray();
-    res.json(institutions.map(({ _id, name, type, city, state, country, logoUrl, coverUrl, description }) => ({ id: _id, name, type, city, state, country, logoUrl, coverUrl, description })));
+    if (query) {
+      const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      filter.$or = ['name', 'type', 'city', 'state', 'country'].map(field => ({ [field]: { $regex: escaped, $options: 'i' } }));
+      delete filter.name;
+    }
+    const institutions = await institutionsCollection.find(filter).sort({ normalizedName: 1, name: 1 }).limit(50).toArray();
+    res.json(institutions.map(({ _id, name, type, city, state, country, logoUrl, coverUrl, description }) => ({
+      id: _id, name, type, city, state, country,
+      logoUrl: String(logoUrl || '').startsWith('data:') ? '' : logoUrl,
+      coverUrl: String(coverUrl || '').startsWith('data:') ? '' : coverUrl,
+      description
+    })));
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -329,15 +378,22 @@ app.get('/institutions/:id/membership', authenticate, async (req, res) => {
 
 app.post('/institutions/:id/membership', authenticate, async (req, res) => {
   try {
-    if (req.user.role !== 'Faculty') return res.status(403).json({ error: 'Only faculty accounts can request institution membership' });
+    if (!['Faculty', 'Student'].includes(req.user.role)) return res.status(403).json({ error: 'Only faculty or student accounts can request institution membership' });
     const institution = await institutionsCollection.findOne({ _id: req.params.id, status: 'active' });
     if (!institution) return res.status(404).json({ error: 'Institution not found' });
+    const branchId = String(req.body.branchId || '');
+    const branch = await branchesCollection.findOne({ _id: branchId, institutionId: institution._id, status: 'active' });
+    if (!branch) return res.status(400).json({ error: 'Choose an active branch in this institution' });
     const userId = String(req.user.id);
     const existing = await membershipsCollection.findOne({ userId, institutionId: req.params.id });
-    if (existing) return res.status(200).json({ status: existing.status, message: 'Membership request already exists' });
+    if (existing && existing.status !== 'rejected') return res.status(200).json({ status: existing.status, message: 'Membership request already exists' });
     const current = await usersCollection.findOne({ _id: req.user.id });
     if (!current || current.institutionId) return res.status(409).json({ error: 'This account is already associated with an institution' });
-    const membership = { _id: crypto.randomUUID(), institutionId: req.params.id, userId, status: 'pending', requestedAt: new Date().toISOString() };
+    if (existing?.status === 'rejected') {
+      await membershipsCollection.updateOne({ _id: existing._id }, { $set: { branchId, branchName: branch.name, role: req.user.role, status: 'pending', requestedAt: new Date().toISOString(), reviewedBy: null, reviewedAt: null } });
+      return res.status(200).json({ status: 'pending', message: 'Your updated branch request has been sent to the coordinator' });
+    }
+    const membership = { _id: crypto.randomUUID(), institutionId: req.params.id, branchId, branchName: branch.name, userId, role: req.user.role, status: 'pending', requestedAt: new Date().toISOString() };
     await membershipsCollection.insertOne(membership);
     res.status(201).json({ status: membership.status, message: 'Membership request sent to institution coordinators' });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -352,10 +408,10 @@ app.post('/institutions', authenticate, requireCoordinator, async (req, res) => 
     const normalizedCity = String(req.body.city || '').trim().toLowerCase();
     const sameName = await institutionsCollection.find({ normalizedName: name.toLowerCase() }).toArray();
     if (sameName.some(item => (item.normalizedCity || String(item.city || '').trim().toLowerCase()) === normalizedCity)) return res.status(409).json({ error: 'An institution with this name and city already exists' });
-    const gallery = Array.isArray(req.body.gallery) ? req.body.gallery.map(String).map(url => url.trim()).filter(Boolean).slice(0, 12) : [];
-    const imageUrls = [req.body.logoUrl, req.body.coverUrl, ...gallery].filter(Boolean);
-    if (imageUrls.some(url => { try { return !['http:', 'https:'].includes(new URL(String(url)).protocol); } catch { return true; } })) return res.status(400).json({ error: 'Image links must be valid http or https URLs' });
-    const doc = { _id: crypto.randomUUID(), name, normalizedName: name.toLowerCase(), type, city: String(req.body.city || '').trim(), normalizedCity, state: String(req.body.state || '').trim(), country: String(req.body.country || '').trim(), address: String(req.body.address || '').trim(), website: String(req.body.website || '').trim(), description: String(req.body.description || '').trim(), logoUrl: String(req.body.logoUrl || '').trim(), coverUrl: String(req.body.coverUrl || '').trim(), gallery, status: 'active', createdBy: req.user.id, createdAt: new Date().toISOString() };
+    const gallery = Array.isArray(req.body.gallery) ? req.body.gallery.slice(0, 12) : [];
+    const mediaError = validateInstitutionMedia({ ...req.body, gallery });
+    if (mediaError) return res.status(400).json({ error: mediaError });
+    const doc = { _id: crypto.randomUUID(), name, normalizedName: name.toLowerCase(), type, city: String(req.body.city || '').trim(), normalizedCity, state: String(req.body.state || '').trim(), country: String(req.body.country || '').trim(), address: String(req.body.address || '').trim(), website: String(req.body.website || '').trim(), description: String(req.body.description || '').trim(), logoUrl: String(req.body.logoUrl || '').trim(), coverUrl: String(req.body.coverUrl || '').trim(), videoUrl: String(req.body.videoUrl || '').trim(), gallery, status: 'active', createdBy: req.user.id, createdAt: new Date().toISOString() };
     if (doc.website && !/^https?:\/\//i.test(doc.website)) return res.status(400).json({ error: 'Website must be a valid http or https URL' });
     const result = await institutionsCollection.insertOne(doc);
     if (req.user.role === 'Coordinator' && !req.user.institutionId) {
@@ -385,7 +441,7 @@ app.put('/coordinator/institutions/:id', authenticate, requireCoordinator, async
     if (req.user.role !== 'Admin' && institutionId !== String(req.user.institutionId)) return res.status(403).json({ error: 'Institution access denied' });
     const institution = await institutionsCollection.findOne({ _id: institutionId });
     if (!institution) return res.status(404).json({ error: 'Institution not found' });
-    const allowed = ['name', 'type', 'city', 'state', 'country', 'address', 'website', 'description', 'logoUrl', 'coverUrl'];
+    const allowed = ['name', 'type', 'city', 'state', 'country', 'address', 'website', 'description', 'logoUrl', 'coverUrl', 'videoUrl'];
     const update = {};
     for (const field of allowed) if (req.body[field] !== undefined) update[field] = String(req.body[field]).trim();
     if (update.name !== undefined && !update.name) return res.status(400).json({ error: 'Institution name cannot be empty' });
@@ -401,11 +457,16 @@ app.put('/coordinator/institutions/:id', authenticate, requireCoordinator, async
     }
     if (update.website && !/^https?:\/\//i.test(update.website)) return res.status(400).json({ error: 'Website must be a valid http or https URL' });
     if (req.body.gallery !== undefined) {
-      if (!Array.isArray(req.body.gallery) || req.body.gallery.length > 12) return res.status(400).json({ error: 'Gallery must contain at most 12 image links' });
-      update.gallery = req.body.gallery.map(String).map(url => url.trim()).filter(Boolean);
+      if (!Array.isArray(req.body.gallery)) return res.status(400).json({ error: 'Gallery must be an array of image links or uploads' });
+      update.gallery = req.body.gallery;
     }
-    const imageUrls = [update.logoUrl || institution.logoUrl, update.coverUrl || institution.coverUrl, ...(update.gallery || institution.gallery || [])].filter(Boolean);
-    if (imageUrls.some(url => { try { return !['http:', 'https:'].includes(new URL(String(url)).protocol); } catch { return true; } })) return res.status(400).json({ error: 'Image links must be valid http or https URLs' });
+    const mediaError = validateInstitutionMedia({
+      logoUrl: update.logoUrl !== undefined ? update.logoUrl : institution.logoUrl,
+      coverUrl: update.coverUrl !== undefined ? update.coverUrl : institution.coverUrl,
+      videoUrl: update.videoUrl !== undefined ? update.videoUrl : institution.videoUrl,
+      gallery: update.gallery !== undefined ? update.gallery : institution.gallery
+    });
+    if (mediaError) return res.status(400).json({ error: mediaError });
     await institutionsCollection.updateOne({ _id: institutionId }, { $set: update });
     res.json({ ...institution, ...update, id: institutionId });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -421,7 +482,7 @@ app.get('/coordinator/memberships', authenticate, requireCoordinator, async (req
     const scope = coordinatorInstitutionFilter(req);
     const requests = await membershipsCollection.find({ ...scope, status: 'pending' }).sort({ requestedAt: -1 }).toArray();
     const users = await Promise.all(requests.map(request => usersCollection.findOne({ _id: request.userId })));
-    res.json(requests.map((request, index) => ({ id: request._id, status: request.status, requestedAt: request.requestedAt, faculty: users[index] ? publicUser(users[index]) : null })).filter(request => request.faculty));
+    res.json(requests.map((request, index) => ({ id: request._id, status: request.status, role: request.role || users[index]?.role || 'Faculty', branchId: request.branchId, branchName: request.branchName, requestedAt: request.requestedAt, member: users[index] ? publicUser(users[index]) : null })).filter(request => request.member));
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -431,8 +492,9 @@ app.put('/coordinator/memberships/:id', authenticate, requireCoordinator, async 
     if (!['approved', 'rejected'].includes(status)) return res.status(400).json({ error: 'Status must be approved or rejected' });
     const membership = await membershipsCollection.findOne({ _id: req.params.id, ...coordinatorInstitutionFilter(req), status: 'pending' });
     if (!membership) return res.status(404).json({ error: 'Pending membership request not found in your institution' });
+    if (status === 'approved' && !membership.branchId) return res.status(400).json({ error: 'This older request has no branch selected. Decline it so the member can submit a new branch request.' });
     await membershipsCollection.updateOne({ _id: membership._id }, { $set: { status, reviewedBy: String(req.user.id), reviewedAt: new Date().toISOString() } });
-    if (status === 'approved') await usersCollection.updateOne({ _id: membership.userId }, { $set: { institutionId: membership.institutionId, institutionMembershipStatus: 'active' } });
+    if (status === 'approved') await usersCollection.updateOne({ _id: membership.userId }, { $set: { institutionId: membership.institutionId, branchId: membership.branchId, institutionMembershipStatus: 'active' } });
     res.json({ id: membership._id, status });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });

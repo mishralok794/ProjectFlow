@@ -687,11 +687,11 @@ endpoints:
     authentication: { required: true, type: "Bearer JWT" }
     authorization:
       roles: ["Coordinator", "Admin"]
-      rules: ["Coordinator privileges are assigned by an administrator; self-registration cannot grant this role.", "Name and institution type (college, university, school) are required.", "Duplicate name and city returns 409; website must be http or https."]
+      rules: ["First-time coordinators may create their own institution profile; existing coordinators may update only their associated institution.", "Name and institution type (college, university, school) are required.", "Duplicate name and city returns 409; website must be http or https.", "Image links may be HTTP/HTTPS or direct PNG/JPEG/WebP uploads up to 2 MB each. Short MP4/WebM uploads are limited to 4 MB and total direct uploads to 6 MB."]
     requestBody:
       contentType: "application/json"
       required: true
-      example: { name: "Example College", type: "college", city: "Delhi", state: "Delhi", country: "India", address: "", website: "https://example.edu", description: "", logoUrl: "", coverUrl: "" }
+      example: { name: "Example College", type: "college", city: "Delhi", state: "Delhi", country: "India", address: "", website: "https://example.edu", description: "", logoUrl: "", coverUrl: "", videoUrl: "", gallery: [] }
     responses:
       201: { description: "Institution profile created" }
       400: { description: "Required fields or website URL are invalid" }
@@ -721,27 +721,28 @@ endpoints:
     method: "POST"
     category: "Coordinator Portal"
     service: "auth-service"
-    summary: "Request faculty membership in an institution"
+    summary: "Request faculty or student membership in an institution branch"
     authentication: { required: true, type: "Bearer JWT" }
-    authorization: { roles: ["Faculty"], rules: ["Creates a pending request; never grants coordinator privileges.", "Account must not already belong to an institution."] }
-    responses: { 201: { description: "Pending membership request created" }, 403: { description: "Only faculty accounts may request membership" }, 404: { description: "Institution not found" }, 409: { description: "Account is already associated with an institution" } }
+    authorization: { roles: ["Faculty", "Student"], rules: ["Creates a pending request for a selected active branch; never grants coordinator privileges.", "Account must not already belong to an institution."] }
+    requestBody: { contentType: "application/json", required: true, example: { branchId: "branch-id" } }
+    responses: { 201: { description: "Pending branch membership request created" }, 400: { description: "An active institution branch must be selected" }, 403: { description: "Only faculty or students may request membership" }, 404: { description: "Institution not found" }, 409: { description: "Account is already associated with an institution" } }
 
   - path: "/api/coordinator/memberships"
     method: "GET"
     category: "Coordinator Portal"
     service: "auth-service"
-    summary: "List pending faculty membership requests"
+    summary: "List pending faculty and student branch membership requests"
     authentication: { required: true, type: "Bearer JWT" }
     authorization: { roles: ["Coordinator", "Admin"], rules: ["Coordinator sees requests for their institution only."] }
-    responses: { 200: { description: "Pending requests with public faculty name and department" }, 403: { description: "Coordinator access required" } }
+    responses: { 200: { description: "Pending requests with public member details, role, and requested branch" }, 403: { description: "Coordinator access required" } }
 
   - path: "/api/coordinator/memberships/{id}"
     method: "PUT"
     category: "Coordinator Portal"
     service: "auth-service"
-    summary: "Approve or reject faculty membership request"
+    summary: "Approve or reject a faculty or student branch membership request"
     authentication: { required: true, type: "Bearer JWT" }
-    authorization: { roles: ["Coordinator", "Admin"], rules: ["Request must be pending and in caller's institution scope.", "Approval associates the faculty account with this institution only."] }
+    authorization: { roles: ["Coordinator", "Admin"], rules: ["Request must be pending and in caller's institution scope.", "Approval associates the account with the requested institution and branch."] }
     requestBody: { contentType: "application/json", required: true, example: { status: "approved" } }
     responses: { 200: { description: "Membership decision saved" }, 400: { description: "Status must be approved or rejected" }, 404: { description: "Pending request not found in caller's institution" } }
 
@@ -751,11 +752,11 @@ endpoints:
     service: "auth-service"
     summary: "Update the institution's public profile"
     authentication: { required: true, type: "Bearer JWT" }
-    authorization: { roles: ["Coordinator", "Admin"], rules: ["Coordinator may update only their associated institution.", "Profile text and HTTP/HTTPS image links are validated.", "Gallery accepts at most 12 public image links."] }
+    authorization: { roles: ["Coordinator", "Admin"], rules: ["Coordinator may update only their associated institution.", "Profile text and media links/uploads are validated.", "Gallery accepts at most 12 image entries; direct uploads follow the stated size/type limits."] }
     requestBody:
       contentType: "application/json"
       required: true
-      example: { name: "Example College", type: "college", city: "Delhi", website: "https://example.edu", description: "", logoUrl: "", coverUrl: "", gallery: ["https://example.edu/campus.jpg"] }
+      example: { name: "Example College", type: "college", city: "Delhi", website: "https://example.edu", description: "", logoUrl: "", coverUrl: "", videoUrl: "", gallery: ["https://example.edu/campus.jpg"] }
     responses: { 200: { description: "Updated institution profile" }, 400: { description: "Invalid type, URL, or gallery size" }, 403: { description: "Institution access denied" }, 404: { description: "Institution not found" } }
 
   - path: "/api/coordinator/courses"
@@ -929,3 +930,16 @@ endpoints:
       required: true
       example: { name: "CSE 2026", branchId: "branch-id", sessionId: "session-id", cohortYear: 2026, description: "" }
     responses: { 201: { description: "Batch created with resolved branch and session names" }, 400: { description: "Required fields missing or branch/session relationship invalid" }, 403: { description: "Institution access denied" }, 409: { description: "Batch already exists for the session" } }
+
+  - path: "/api/notifications/coordinator/branch"
+    method: "POST"
+    category: "Coordinator Portal"
+    service: "notification-service"
+    summary: "Send a message to active members of one institution branch"
+    authentication: { required: true, type: "Bearer JWT" }
+    authorization: { roles: ["Coordinator", "Admin"], rules: ["Coordinators can message only branches in their institution.", "Recipients are active faculty and/or students with approved membership in that branch."] }
+    requestBody: { contentType: "application/json", required: true, example: { branchId: "branch-id", audience: "all", title: "Academic update", message: "Please review the updated schedule." } }
+    responses:
+      201: { description: "One notification created per recipient, with sent count" }
+      400: { description: "Invalid audience, title, message, or no matching branch members" }
+      403: { description: "Coordinator access required" }

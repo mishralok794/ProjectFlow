@@ -25,7 +25,8 @@ import {
   CalendarDays,
   ClipboardList,
   UserRoundCog,
-  Activity
+  Activity,
+  Send
 } from 'lucide-react';
 
 export function Sidebar({ activeTab, setActiveTab, onOpenNotifications }) {
@@ -64,6 +65,7 @@ export function Sidebar({ activeTab, setActiveTab, onOpenNotifications }) {
     { id: 'coordinator-sessions', label: 'Academic Sessions', icon: CalendarDays },
     { id: 'coordinator-batches', label: 'Batches', icon: ClipboardList },
     { id: 'coordinator-faculty', label: 'Faculty Directory', icon: Users },
+    { id: 'coordinator-messages', label: 'Branch Messages', icon: Send },
     { id: 'coordinator-assignments', label: 'Faculty Assignments', icon: UserCheck },
     { id: 'coordinator-coordinators', label: 'Coordinators', icon: UserRoundCog },
     { id: 'coordinator-activity', label: 'Activity & Monitoring', icon: Activity },
