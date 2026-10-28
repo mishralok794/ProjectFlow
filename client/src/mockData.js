@@ -1194,6 +1194,9 @@ export const mockService = {
         gallery: institutionInput.gallery || [],
         createdAt: new Date().toISOString()
       });
+    } else if (db.institutions.length === 1) {
+      // In the single-institution demo, new faculty/students appear in that coordinator's directory immediately.
+      newUser.institutionId = db.institutions[0].id;
     }
     db.users.push(newUser);
     saveStorage(db);
