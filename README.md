@@ -159,6 +159,19 @@ This repository is pre-configured with `netlify.toml` and `_redirects` for turnk
    - Set `VITE_API_URL=https://your-backend-api.com/api` in Netlify Site Settings, using the deployed gateway URL. Without this setting and a running backend, `/api` requests fall through to the single-page app and return HTML.
    - The Faculty Teaching Workspace, team messaging, profile saves, and live GitHub evidence require the live backend. In a static preview, these API-backed actions are unavailable.
 
+## Render Backend Deployment
+
+The repository includes a Render Blueprint at `render.yaml` for a low-cost demo deployment. It starts the API gateway and the six microservices through `npm start` in one Render web service. The gateway listens on Render's HTTP port; the microservices communicate over localhost. This is suitable for a demo, not horizontal scaling.
+
+1. Create a MongoDB Atlas database user with access to the ProjectFlow databases and copy the Atlas Node.js connection string. Atlas website login credentials are separate from database credentials.
+2. In Render, choose **New → Blueprint**, connect this repository, and select the branch to deploy.
+3. When prompted, set `MONGODB_URI` to the Atlas connection string. Render generates `JWT_SECRET` for the service. Keep both values in Render and do not commit them to GitHub or put them in Netlify.
+4. In Atlas **Database & Network Access → Network Access**, allow the Render service to connect. Use the Render service's outbound IP addresses where possible; do not add only your personal computer's IP.
+5. After the Render deploy is live, open `https://<render-service>.onrender.com/health` and confirm the gateway and all six services report healthy.
+6. In Netlify, add `VITE_API_URL=https://<render-service>.onrender.com/api` under the site's environment variables, then trigger a new deploy.
+
+The free Render service can spin down when idle and its first request may take longer. MongoDB Atlas stores application data persistently; the old local JSON files are only used when MongoDB is unavailable.
+
 
 ## Documentation
 
