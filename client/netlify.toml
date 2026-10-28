@@ -6,6 +6,7 @@
 
 [build.environment]
   NODE_VERSION = "20"
+  VITE_DEMO_MODE = "true"
 
 # Redirect all frontend routes to index.html for Single Page Application (SPA) routing
 [[redirects]]

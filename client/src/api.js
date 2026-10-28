@@ -1,6 +1,7 @@
 import { mockService } from './mockData';
 
 const BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '') || '/api';
+const DEMO_MODE = import.meta.env.VITE_DEMO_MODE === 'true' || !import.meta.env.VITE_API_URL;
 
 export function getToken() {
   return localStorage.getItem('projectflow_token');
@@ -28,6 +29,11 @@ export function setUser(user) {
 }
 
 async function request(endpoint, options = {}, fallbackFn = null) {
+  if (DEMO_MODE) {
+    if (fallbackFn) return await fallbackFn();
+    return await mockService.demoRequest(endpoint, options);
+  }
+
   try {
     const token = getToken();
     const headers = {
@@ -186,6 +192,18 @@ export const api = {
     ),
 
   downloadCourseAttachment: async (courseId, filename) => {
+    if (DEMO_MODE) {
+      const content = `ProjectFlow demo attachment: ${filename}\nCourse: ${courseId}\n`;
+      const blobUrl = window.URL.createObjectURL(new Blob([content], { type: 'text/plain' }));
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = filename.replace(/\.[^.]+$/, '') + '.txt';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(blobUrl);
+      return true;
+    }
     const token = getToken();
     const url = `${BASE_URL}/courses/${courseId}/attachments/${encodeURIComponent(filename)}`;
     const res = await fetch(url, {

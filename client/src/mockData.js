@@ -2,6 +2,7 @@
 // Automatically activated when running as a static build on Netlify without live backend microservices
 
 const MOCK_STORAGE_KEY = 'projectflow_mock_db_v5';
+const DEMO_LISTS = ['institutions', 'branches', 'sessions', 'batches', 'memberships', 'facultyAssignments', 'facultyLabs'];
 
 const defaultAuthors = [
   { login: 'alex-chen', name: 'Alex Chen', avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100' },
@@ -855,7 +856,14 @@ export const INITIAL_DATA = {
       read: true,
       createdAt: '2026-10-18T14:35:00.000Z'
     }
-  ]
+  ],
+  institutions: [],
+  branches: [],
+  sessions: [],
+  batches: [],
+  memberships: [],
+  facultyAssignments: [],
+  facultyLabs: []
 };
 
 function getStorage() {
@@ -865,7 +873,8 @@ function getStorage() {
       localStorage.setItem(MOCK_STORAGE_KEY, JSON.stringify(INITIAL_DATA));
       return JSON.parse(JSON.stringify(INITIAL_DATA));
     }
-    return JSON.parse(raw);
+    const stored = JSON.parse(raw);
+    return { ...JSON.parse(JSON.stringify(INITIAL_DATA)), ...stored, ...Object.fromEntries(DEMO_LISTS.map(key => [key, Array.isArray(stored[key]) ? stored[key] : []])) };
   } catch (e) {
     return JSON.parse(JSON.stringify(INITIAL_DATA));
   }
@@ -879,7 +888,250 @@ function saveStorage(data) {
   }
 }
 
+export function exportDemoData() {
+  return JSON.stringify(getStorage(), null, 2);
+}
+
+export function importDemoData(jsonText) {
+  const parsed = JSON.parse(jsonText);
+  if (!parsed || !Array.isArray(parsed.users) || !Array.isArray(parsed.courses)) {
+    throw new Error('This is not a ProjectFlow demo data file.');
+  }
+  const next = { ...JSON.parse(JSON.stringify(INITIAL_DATA)), ...parsed };
+  for (const key of DEMO_LISTS) if (!Array.isArray(next[key])) next[key] = [];
+  saveStorage(next);
+  return next;
+}
+
+function demoCurrentUser() {
+  try { return JSON.parse(localStorage.getItem('projectflow_user') || 'null'); }
+  catch { return null; }
+}
+
+function demoId(prefix = 'demo') {
+  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function coordinatorInstitution(db, user = demoCurrentUser()) {
+  return db.institutions.find(row => String(row.coordinatorId) === String(user?.id) || String(row.id) === String(user?.institutionId)) || null;
+}
+
+function institutionRows(db, institutionId, key) {
+  return (db[key] || []).filter(row => !institutionId || String(row.institutionId) === String(institutionId));
+}
+
+function demoCourse(db, id) {
+  return db.courses.find(row => String(row.id || row._id) === String(id) || String(row.code).toLowerCase() === String(id).toLowerCase());
+}
+
+function demoRequest(endpoint, options = {}) {
+  const method = (options.method || 'GET').toUpperCase();
+  const body = typeof options.body === 'string' ? JSON.parse(options.body || '{}') : (options.body || {});
+  const path = endpoint.split('?')[0];
+  const query = new URLSearchParams(endpoint.split('?')[1] || '');
+  const db = getStorage();
+  const user = demoCurrentUser();
+  const currentInstitution = coordinatorInstitution(db, user);
+  const result = value => Promise.resolve(value);
+  const save = value => { saveStorage(db); return result(value); };
+
+  if (path === '/institutions' && method === 'GET') {
+    const search = (query.get('search') || '').toLowerCase();
+    return result(db.institutions.filter(row => !search || `${row.name} ${row.type} ${row.city} ${row.state}`.toLowerCase().includes(search)).map(row => ({ ...row, id: row.id })));
+  }
+  const institutionRoute = path.match(/^\/institutions\/([^/]+)(?:\/(membership))?$/);
+  if (institutionRoute) {
+    const [, institutionId, membershipRoute] = institutionRoute;
+    const institution = db.institutions.find(row => String(row.id) === institutionId);
+    if (membershipRoute) {
+      const request = db.memberships.find(row => String(row.institutionId) === institutionId && String(row.userId) === String(user?.id));
+      if (method === 'GET') return result(request || { status: 'none' });
+      if (method === 'POST') {
+        const row = request || { id: demoId('membership'), institutionId, userId: user?.id, userName: user?.name, userEmail: user?.email };
+        Object.assign(row, { branchId: body.branchId, status: 'pending', requestedAt: new Date().toISOString() });
+        if (!request) db.memberships.push(row);
+        return save({ ...row, message: 'Membership request saved in this demo.' });
+      }
+    }
+    if (method === 'GET') {
+      if (!institution) return result(null);
+      const branches = institutionRows(db, institutionId, 'branches');
+      const coordinators = db.users.filter(item => String(item.institutionId) === institutionId && item.role === 'Coordinator').map(item => ({ id: item.id, name: item.name, department: item.department }));
+      return result({ ...institution, branches, coordinators, coordinatorCount: coordinators.length });
+    }
+  }
+
+  if (path === '/coordinator/overview' && method === 'GET') {
+    const inst = currentInstitution;
+    const branches = inst ? institutionRows(db, inst.id, 'branches') : [];
+    const sessions = inst ? institutionRows(db, inst.id, 'sessions') : [];
+    const batches = inst ? institutionRows(db, inst.id, 'batches') : [];
+    const courses = inst ? (db.courses || []).filter(row => String(row.institutionId) === String(inst.id)) : [];
+    const facultyCount = inst ? db.users.filter(row => String(row.institutionId) === String(inst.id) && row.role === 'Faculty').length : 0;
+    const coordinatorCount = inst ? db.users.filter(row => String(row.institutionId) === String(inst.id) && row.role === 'Coordinator').length : 0;
+    return result({ institution: inst, stats: { branches: branches.length, sessions: sessions.length, batches: batches.length, courses: courses.length, faculty: facultyCount, coordinators: coordinatorCount }, batches: batches.slice(-5).reverse() });
+  }
+
+  const coordinatorList = path.match(/^\/coordinator\/(branches|sessions|batches|memberships|courses|assignments)$/);
+  if (coordinatorList && method === 'GET') {
+    const [, kind] = coordinatorList;
+    const key = { memberships: 'memberships', assignments: 'facultyAssignments' }[kind] || kind;
+    const rows = institutionRows(db, currentInstitution?.id, key);
+    if (kind === 'courses') return result(rows.map(row => ({ ...row, branchName: db.branches.find(b => b.id === row.branchId)?.name || '', batchName: db.batches.find(b => b.id === row.batchId)?.name || '', sessionName: db.sessions.find(s => s.id === row.sessionId)?.name || '' })));
+    if (kind === 'assignments') return result(rows.map(row => ({ ...row, facultyName: db.users.find(person => String(person.id) === String(row.facultyId))?.name || row.facultyName, courseName: demoCourse(db, row.courseId)?.name || row.courseName, courseCode: demoCourse(db, row.courseId)?.code || row.courseCode, batchName: db.batches.find(b => b.id === row.batchId)?.name || '', sessionName: db.sessions.find(s => s.id === row.sessionId)?.name || '' })));
+    return result(rows);
+  }
+
+  if (path === '/institutions' && method === 'POST') {
+    const row = { ...body, id: demoId('institution'), coordinatorId: user?.id, coordinatorName: user?.name, createdAt: new Date().toISOString(), gallery: body.gallery || [] };
+    db.institutions.push(row);
+    if (user) {
+      const storedUser = db.users.find(item => String(item.id) === String(user.id));
+      if (storedUser) storedUser.institutionId = row.id;
+      localStorage.setItem('projectflow_user', JSON.stringify({ ...user, institutionId: row.id }));
+    }
+    return save(row);
+  }
+
+  const updateInstitution = path.match(/^\/coordinator\/institutions\/([^/]+)$/);
+  if (updateInstitution && method === 'PUT') {
+    const row = db.institutions.find(item => String(item.id) === updateInstitution[1]);
+    if (!row) return result({ ...body, id: updateInstitution[1] });
+    Object.assign(row, body);
+    return save(row);
+  }
+
+  const membershipReview = path.match(/^\/coordinator\/memberships\/([^/]+)$/);
+  if (membershipReview && method === 'PUT') {
+    const request = db.memberships.find(row => String(row.id) === membershipReview[1]);
+    if (request) {
+      request.status = body.status || 'approved';
+      request.reviewedAt = new Date().toISOString();
+      if (request.status === 'approved') {
+        const member = db.users.find(row => String(row.id) === String(request.userId));
+        if (member) member.institutionId = request.institutionId;
+      }
+    }
+    return save(request || { id: membershipReview[1], ...body });
+  }
+
+  const createList = path.match(/^\/coordinator\/(branches|sessions|batches|courses|assignments)$/);
+  if (createList && method === 'POST') {
+    const [, kind] = createList;
+    const key = { branches: 'branches', sessions: 'sessions', batches: 'batches', courses: 'courses', assignments: 'facultyAssignments' }[kind];
+    const row = { ...body, id: demoId(kind.slice(0, -1)), institutionId: currentInstitution?.id || user?.institutionId, createdAt: new Date().toISOString() };
+    if (kind === 'branches' && typeof body.programs === 'string') row.programs = body.programs.split(',').map(value => value.trim()).filter(Boolean);
+    if (kind === 'courses') Object.assign(row, { enrolledEmails: [], color: '#0284c7', icon: 'book-open' });
+    if (kind === 'assignments') {
+      const course = demoCourse(db, body.courseId);
+      const faculty = db.users.find(person => String(person.id) === String(body.facultyId));
+      if (course && faculty) Object.assign(course, { facultyId: faculty.id, facultyName: faculty.name, facultyEmail: faculty.email });
+      row.facultyName = faculty?.name || '';
+      row.courseName = course?.name || '';
+      row.courseCode = course?.code || '';
+      row.batchId = course?.batchId;
+      row.sessionId = course?.sessionId;
+      row.status = 'Active';
+    }
+    db[key].push(row);
+    return save(row);
+  }
+
+  const coordinatorUpdate = path.match(/^\/coordinator\/(courses|assignments)\/([^/]+)$/);
+  if (coordinatorUpdate && method === 'PUT') {
+    const [, kind, id] = coordinatorUpdate;
+    const rows = kind === 'courses' ? db.courses : db.facultyAssignments;
+    const row = rows.find(item => String(item.id || item._id) === id);
+    if (row) Object.assign(row, body);
+    if (kind === 'assignments') {
+      const course = demoCourse(db, body.courseId || row?.courseId);
+      const faculty = db.users.find(person => String(person.id) === String(body.facultyId || row?.facultyId));
+      if (course && faculty) Object.assign(course, { facultyId: faculty.id, facultyName: faculty.name, facultyEmail: faculty.email });
+    }
+    return save(row || { id, ...body });
+  }
+
+  if (path === '/auth/faculty' && method === 'GET') return result(db.users.filter(person => person.role === 'Faculty'));
+  if (path === '/auth/profile' && method === 'PUT') {
+    const row = db.users.find(person => String(person.id) === String(user?.id));
+    if (row) Object.assign(row, body);
+    const updated = { ...user, ...body };
+    localStorage.setItem('projectflow_user', JSON.stringify(updated));
+    return save(updated);
+  }
+
+  if (path === '/faculty/courses' && method === 'GET') {
+    const rows = db.courses.filter(course => String(course.facultyId) === String(user?.id) || String(course.facultyEmail || '').toLowerCase() === String(user?.email || '').toLowerCase());
+    return result(rows.map(course => ({ ...course, id: course.id || course._id, program: course.program || db.branches.find(row => row.id === course.branchId)?.programs?.[0] || '', branchName: db.branches.find(row => row.id === course.branchId)?.name || course.department || '', teamCount: db.courseTeams.filter(team => String(team.courseId) === String(course.id || course._id)).length, pendingReviewCount: 0, activeLabCount: db.facultyLabs.filter(lab => String(lab.courseId) === String(course.id || course._id) && lab.status !== 'Closed').length })));
+  }
+
+  const teamUpdate = path.match(/^\/faculty\/courses\/([^/]+)\/teams\/([^/]+)\/(status|repository)$/);
+  if (teamUpdate && method === 'PUT') {
+    const [, , teamId, teamAction] = teamUpdate;
+    const team = db.courseTeams.find(row => String(row.id || row._id) === teamId);
+    if (team) Object.assign(team, teamAction === 'repository' ? { githubUrl: body.githubUrl } : body);
+    return save(team || { id: teamId, ...body });
+  }
+
+  const labReview = path.match(/^\/faculty\/courses\/([^/]+)\/labs\/([^/]+)\/submissions\/([^/]+)\/review$/);
+  if (labReview && method === 'PUT') {
+    const [, , labId, submissionId] = labReview;
+    const lab = db.facultyLabs.find(row => String(row.id) === labId);
+    const submission = lab?.submissions?.find(row => String(row.id) === submissionId);
+    if (submission) Object.assign(submission, body);
+    return save(submission || { id: submissionId, ...body });
+  }
+
+  const facultyCourse = path.match(/^\/faculty\/courses\/([^/]+)(?:\/(rules|students|labs))?$/);
+  if (facultyCourse) {
+    const [, courseId, section] = facultyCourse;
+    const course = demoCourse(db, courseId);
+    if (section === 'rules' && method === 'PUT' && course) { Object.assign(course, body); course.teamRules = body.teamRules || course.teamRules; return save(course); }
+    if (section === 'students' && method === 'POST' && course) {
+      const selected = db.users.filter(person => (body.studentIds || []).includes(person.id));
+      course.enrolledEmails = [...new Set([...(course.enrolledEmails || []), ...selected.map(person => person.email)])];
+      return save({ enrolled: selected.length });
+    }
+    if (section === 'labs') {
+      if (method === 'GET') return result(db.facultyLabs.filter(lab => String(lab.courseId) === String(courseId)));
+      if (method === 'POST') { const lab = { ...body, id: demoId('lab'), courseId, status: 'Active', submissions: [], createdAt: new Date().toISOString() }; db.facultyLabs.push(lab); return save(lab); }
+    }
+    if (!section && method === 'GET' && course) {
+      const teams = db.courseTeams.filter(team => String(team.courseId) === String(course.id || course._id)).map(team => ({ ...team, members: (team.members || []).map(member => ({ ...member, id: member.id || member._id || member.email, githubUrl: member.githubUrl || '' })), projectStatus: team.projectStatus || '', progressPercentage: team.progressPercentage ?? null }));
+      const students = db.users.filter(person => person.role === 'Student' && (course.enrolledEmails || []).includes(person.email)).map(person => ({ ...person, rollNumber: person.rollNumber || '' }));
+      return result({ course, teams, students, projects: [] });
+    }
+  }
+
+  const studentLab = path.match(/^\/courses\/([^/]+)\/labs(?:\/([^/]+)\/submissions)?$/);
+  if (studentLab) {
+    const [, courseId, labId] = studentLab;
+    if (method === 'GET') return result(db.facultyLabs.filter(lab => String(lab.courseId) === String(courseId)));
+    if (method === 'POST' && labId) {
+      const lab = db.facultyLabs.find(row => String(row.id) === labId);
+      const team = db.courseTeams.find(row => String(row.courseId) === String(courseId) && (row.members || []).some(member => member.email === user?.email));
+      if (lab) lab.submissions.push({ id: demoId('submission'), teamId: team?.id || user?.id, teamName: team?.name || user?.name, submittedBy: user?.name, ...body, status: 'Submitted', submittedAt: new Date().toISOString() });
+      return save({ submitted: true });
+    }
+  }
+
+  if (path === '/notifications/faculty/course' && method === 'POST') {
+    const recipients = body.audience === 'team' ? (db.courseTeams.find(team => String(team.id) === String(body.teamId))?.members || []).length : (demoCourse(db, body.courseId)?.enrolledEmails || []).length;
+    db.notifications.unshift({ id: demoId('notif'), title: body.title, message: body.message, type: 'course', read: false, createdAt: new Date().toISOString() });
+    return save({ sent: recipients || 1, courseNames: [demoCourse(db, body.courseId)?.name].filter(Boolean) });
+  }
+  if (path === '/notifications/coordinator/branch' && method === 'POST') {
+    const recipients = db.users.filter(person => String(person.institutionId) === String(currentInstitution?.id) && ['Faculty', 'Student'].includes(person.role) && (body.audience === 'all' || (body.audience === 'faculty' ? person.role === 'Faculty' : person.role === 'Student'))).length;
+    db.notifications.unshift({ id: demoId('notif'), title: body.title, message: body.message, type: 'branch', read: false, createdAt: new Date().toISOString() });
+    return save({ sent: recipients, branchName: db.branches.find(row => String(row.id) === String(body.branchId))?.name || 'branch' });
+  }
+
+  if (method === 'GET') return result([]);
+  return result({ ok: true, id: demoId('record'), ...body });
+}
+
 export const mockService = {
+  demoRequest,
   // Auth
   login: async ({ email, password }) => {
     const db = getStorage();
@@ -915,6 +1167,10 @@ export const mockService = {
     }
 
     const assignedRole = ['Coordinator', 'Faculty'].includes(userData.role) ? userData.role : 'Student';
+    const institutionInput = userData.institution || {};
+    if (assignedRole === 'Coordinator' && (!String(institutionInput.name || '').trim() || !['college', 'university', 'school'].includes(String(institutionInput.type || '').toLowerCase()))) {
+      throw new Error('Coordinator registration requires an institution name and type');
+    }
     const newUser = {
       id: `usr_${Date.now()}`,
       name: userData.name.trim(),
@@ -925,6 +1181,20 @@ export const mockService = {
       department: userData.department || 'Computer Science & Engineering',
       createdAt: new Date().toISOString()
     };
+    if (assignedRole === 'Coordinator') {
+      const institutionId = demoId('institution');
+      newUser.institutionId = institutionId;
+      db.institutions.push({
+        ...institutionInput,
+        id: institutionId,
+        name: String(institutionInput.name).trim(),
+        type: String(institutionInput.type).toLowerCase(),
+        coordinatorId: newUser.id,
+        coordinatorName: newUser.name,
+        gallery: institutionInput.gallery || [],
+        createdAt: new Date().toISOString()
+      });
+    }
     db.users.push(newUser);
     saveStorage(db);
     return { token: `demo-token-${newUser.id}`, user: newUser };
@@ -933,8 +1203,10 @@ export const mockService = {
   getMe: async (token) => {
     const db = getStorage();
     if (!token) throw new Error('Not authenticated');
+    if (!token.startsWith('demo-token-')) throw new Error('This session is not a ProjectFlow demo session');
     const userId = token.replace('demo-token-', '');
-    const user = db.users.find(u => u.id === userId) || db.users[3]; // default Alex Chen
+    const user = db.users.find(u => u.id === userId);
+    if (!user) throw new Error('This demo account is no longer available');
     return user;
   },
 

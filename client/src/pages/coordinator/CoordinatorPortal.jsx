@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../../api';
 import { useAuth } from '../../context/AuthContext';
+import { exportDemoData, importDemoData } from '../../mockData';
 import {
   Activity, ArrowLeft, ArrowRight, BookOpen, Building2, CalendarDays, CheckCircle2,
   ClipboardList, Globe2, GraduationCap, MapPin, Plus, RefreshCw, School, Users
@@ -38,6 +39,33 @@ function dataUrlByteLength(value) {
 
 function Field({ label, children }) {
   return <label className="coord-field"><span>{label}</span>{children}</label>;
+}
+
+function DemoDataTools() {
+  const demoMode = import.meta.env.VITE_DEMO_MODE === 'true' || !import.meta.env.VITE_API_URL;
+  if (!demoMode) return null;
+  const exportFile = () => {
+    const blobUrl = URL.createObjectURL(new Blob([exportDemoData()], { type: 'application/json' }));
+    const link = document.createElement('a');
+    link.href = blobUrl;
+    link.download = 'projectflow-demo-data.json';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(blobUrl);
+  };
+  const importFile = async event => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      importDemoData(await file.text());
+      window.location.reload();
+    } catch (error) {
+      window.alert(error.message || 'Could not import this ProjectFlow data file.');
+      event.target.value = '';
+    }
+  };
+  return <div className="coord-demo-data-tools"><button type="button" className="btn btn-secondary" onClick={exportFile}>Download data JSON</button><label className="btn btn-secondary coord-import-json">Import data JSON<input type="file" accept="application/json,.json" onChange={importFile} /></label></div>;
 }
 
 function PublicInstitutionPage({ institutionId }) {
@@ -164,7 +192,7 @@ export function CoordinatorPortal({ activeTab, user }) {
   if (loading && !overview) return <div className="coord-loading" role="status"><RefreshCw className="coord-spin" /> Loading your coordinator workspace…</div>;
   return (
     <div className="coord-page">
-      <div className="coord-page-head"><div><span className="coord-eyebrow">COORDINATOR WORKSPACE</span><h1>{title}</h1><p>{subtitle}</p></div><button className="btn btn-secondary" onClick={refresh} aria-label="Refresh coordinator data"><RefreshCw size={16} /> Refresh</button></div>
+      <div className="coord-page-head"><div><span className="coord-eyebrow">COORDINATOR WORKSPACE</span><h1>{title}</h1><p>{subtitle}</p></div><div className="coord-page-actions"><DemoDataTools /><button className="btn btn-secondary" onClick={refresh} aria-label="Refresh coordinator data"><RefreshCw size={16} /> Refresh</button></div></div>
       {error && <div className="coord-alert coord-alert-error" role="alert">{error}<button onClick={() => setError('')} aria-label="Dismiss error">×</button></div>}
       {success && <div className="coord-alert coord-alert-success" role="status"><CheckCircle2 size={17} />{success}<button onClick={() => setSuccess('')} aria-label="Dismiss message">×</button></div>}
 
