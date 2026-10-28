@@ -1,7 +1,9 @@
 import { mockService } from './mockData';
 
 const BASE_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '') || '/api';
-const DEMO_MODE = import.meta.env.VITE_DEMO_MODE === 'true' || !import.meta.env.VITE_API_URL;
+// The no-backend showcase is the safe default. Set VITE_DEMO_MODE=false only
+// when a real ProjectFlow API gateway is deployed and configured.
+const DEMO_MODE = import.meta.env.VITE_DEMO_MODE !== 'false';
 
 export function getToken() {
   return localStorage.getItem('projectflow_token');
@@ -53,7 +55,7 @@ async function request(endpoint, options = {}, fallbackFn = null) {
     // If Netlify redirected the API request to index.html (SPA catch-all), or received non-JSON
     if (contentType.includes('text/html')) {
       if (fallbackFn) return await fallbackFn();
-      throw new Error(`Endpoint returned HTML (backend not available at ${BASE_URL})`);
+      return await mockService.demoRequest(endpoint, options);
     }
 
     if (!response.ok) {

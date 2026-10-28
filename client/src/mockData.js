@@ -1061,7 +1061,19 @@ function demoRequest(endpoint, options = {}) {
   }
 
   if (path === '/faculty/courses' && method === 'GET') {
-    const rows = db.courses.filter(course => String(course.facultyId) === String(user?.id) || String(course.facultyEmail || '').toLowerCase() === String(user?.email || '').toLowerCase());
+    let rows = db.courses.filter(course => String(course.facultyId) === String(user?.id) || String(course.facultyEmail || '').toLowerCase() === String(user?.email || '').toLowerCase());
+    if (!rows.length && String(user?.email || '').toLowerCase() === 'dr.harrison@projectflow.edu') {
+      const sampleCourse = demoCourse(db, 'course_cs543') || db.courses[0];
+      if (sampleCourse) {
+        Object.assign(sampleCourse, { facultyId: user.id, facultyName: user.name, facultyEmail: user.email });
+        rows = [sampleCourse];
+        const courseId = String(sampleCourse.id || sampleCourse._id);
+        if (!db.facultyLabs.some(lab => String(lab.courseId) === courseId)) {
+          db.facultyLabs.push({ id: 'demo_lab_cs543', courseId, title: 'REST API integration lab', instructions: 'Build and test one REST endpoint, then submit your code or notes for review.', durationMinutes: 60, dueAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(), status: 'Active', submissions: [{ id: 'demo_submission_team_alpha', teamId: 'team_alpha', teamNumber: '20251651001', teamName: 'Team Alpha', submittedBy: 'Alex Chen', content: 'Implemented GET /api/projects with validation and a JSON response.', status: 'Submitted', submittedAt: new Date().toISOString() }] });
+        }
+        saveStorage(db);
+      }
+    }
     return result(rows.map(course => ({ ...course, id: course.id || course._id, program: course.program || db.branches.find(row => row.id === course.branchId)?.programs?.[0] || '', branchName: db.branches.find(row => row.id === course.branchId)?.name || course.department || '', teamCount: db.courseTeams.filter(team => String(team.courseId) === String(course.id || course._id)).length, pendingReviewCount: 0, activeLabCount: db.facultyLabs.filter(lab => String(lab.courseId) === String(course.id || course._id) && lab.status !== 'Closed').length })));
   }
 

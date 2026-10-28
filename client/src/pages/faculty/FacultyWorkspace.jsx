@@ -126,7 +126,8 @@ export function FacultyWorkspace({ initialView = 'dashboard', onNavigate }) {
   const openCourse = id => { setDetail(null); setSelectedTeamId(''); setSelectedId(id); };
 
   const greeting = new Date().getHours() < 12 ? 'Good morning' : new Date().getHours() < 17 ? 'Good afternoon' : 'Good evening';
-  const pageTitles = { dashboard: `${greeting}${user?.name ? `, ${user.name.split(' ')[0]}` : ''}`, subjects: 'My Subjects', teams: selectedCourse ? `${selectedCourse.name} teams` : 'My Teams', labs: selectedCourse ? `${selectedCourse.name} lab tasks` : 'Lab Tasks', messages: 'Messages', profile: 'My teaching profile' };
+  const firstName = (user?.name || '').replace(/^(Dr|Prof)\.?\s+/i, '').split(' ')[0];
+  const pageTitles = { dashboard: `${greeting}${firstName ? `, ${firstName}` : ''}`, subjects: 'My Subjects', teams: selectedCourse ? `${selectedCourse.name} teams` : 'My Teams', labs: selectedCourse ? `${selectedCourse.name} lab tasks` : 'Lab Tasks', messages: 'Messages', profile: 'My teaching profile' };
   const showSubjectCards = ['dashboard', 'subjects', 'teams', 'labs'].includes(view) && !selectedCourse;
 
   return <section className="faculty-workspace" style={{ padding: '12px 4px 40px', color: '#1e293b' }}>
